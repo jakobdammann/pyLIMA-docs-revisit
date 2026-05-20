@@ -1,0 +1,128 @@
+digraph PyLIMA_Schematic_Workflow {
+	compound=true
+	rankdir=LR
+	node [fontname=Helvetica fontsize=12 shape=box style=filled]
+	graph [fontname=Helvetica]
+	color=darkgrey splines=ortho
+	nodesep=0.25
+	ranksep=0.7
+	subgraph cluster_telescope {
+		label=<<B>Telescope</B><BR/>telescopes.Telescope()>
+		node [fillcolor="#CFFBAF"]
+		sim_telescope [label=<<B>Simulated Telescope</B><BR/>(created with<BR/>simulations.simulator.simulate_a_telescope())> fillcolor="#E8FFC7"]
+		telescope [label=<<B>Telescope</B><BR/>(corresponds to<BR/>one dataset and<BR/>one filter)>]
+	}
+	subgraph cluster_data {
+		label=<Data>
+		node [fillcolor="#DDDDDD"]
+		subgraph cluster_data_telescope {
+			label=""
+			limb_darkening [label=<<B>Limb Darkening</B><BR/>Coefficients<BR/>(per Telescope &amp; Filter)>]
+			location [label=<<B>Location</B><BR/>(per Telescope)>]
+			filter [label=<<B>Filter</B><BR/>(per Lightcurve)>]
+			lightcurve [label=<<B>Lightcurve</B><BR/>or<BR/><B>Astrometry</B><BR/>(may have to be binned)>]
+		}
+		ra_dec [label=<<B>RA, DEC</B><BR/>(coordinates of object)>]
+	}
+	subgraph cluster_event {
+		label=<<B>Event</B><BR/>event.Event()>
+		node [fillcolor="#A4FFAB"]
+		event [label=<<B>Event</B><BR/>(contains array <BR/>of Telescopes &amp; RA, DEC,<BR/>defines alignement data)>]
+	}
+	lightcurve -> telescope [lhead=cluster_telescope ltail=cluster_data_telescope]
+	telescope -> event [lhead=cluster_event ltail=cluster_telescope]
+	ra_dec -> event [lhead=cluster_event]
+	ra_dec -> telescope [style=invis]
+	subgraph cluster_models {
+		label=<<B>Model</B><BR/>models.???model()>
+		node [fillcolor="#DCFAF4"]
+		model_usbl [label=<<B>USBL</B><BR/>Uniform Source Binary Lens<BR/>without LD, no caustic>]
+		model_fsbl [label=<<B>FSBL</B><BR/>Finite Source Binary Lens<BR/>with LD>]
+		model_psbl [label=<<B>PSBL</B><BR/>Point Source Binary Lens>]
+		node [fillcolor="#B7DBFF"]
+		model_dspl [label=<<B>DSPL</B><BR/>Double Source Point Lens<BR/>no caustic, two peaks>]
+		model_fsplarge [label=<<B>FSPLarge</B>>]
+		model_fspl [label=<<B>FSPL</B><BR/>Finite Source Point Lens<BR/>with LD, short tE and/or small u0>]
+		model_pspl [label=<<B>PSPL</B><BR/>Point Source Point Lens>]
+	}
+	event -> model_pspl [lhead=cluster_models ltail=cluster_event]
+	subgraph cluster_additional {
+		label="Additional Modelling"
+		node [fillcolor="#F3E8FF"]
+		orbital_motion_lens [label=<<B>Orbital Motion of Lens</B>>]
+		xallarap [label=<<B>Xallarap</B><BR/>orbital motion of source>]
+		parallax [label=<<B>Parallax</B><BR/>terrestrial, annual<BR/>and/or space>]
+	}
+	xallarap -> model_fsbl [lhead=cluster_models ltail=cluster_additional]
+	event -> parallax [style=invis]
+	subgraph cluster_fitter {
+		label=<<B>Fitter / Optimizer</B><BR/>fits.???fit()>
+		node [fillcolor="#FDEFA8"]
+		subgraph cluster_other_custom {
+			color=none label=""
+			fitter_custom [label="Custom Optimizers
+(Simplex/Nealder-Mead, etc.)" fillcolor="#FFFDC9"]
+			fitter_other [label="Other Development
+Optimizers
+(Bootstrap, MINUIT, etc.)" fillcolor="#FFFDC9"]
+		}
+		fitter_mcmc [label=<<B>MCMC</B><BR/>Mote-Carlo-Markov-Chain,<BR/>emcee<BR/>(slow, outputs posterior/uncertainty)> fillcolor="#FFBBA7"]
+		subgraph cluster_gradient {
+			label="Gradient-Like Fits"
+			node [fillcolor="#FFDCA0"]
+			fitter_trf [label=<<B>TRF</B><BR/>Trust Region Reflective>]
+			fitter_lm [label=<<B>LM</B><BR/>Levenberg-Marquardt<BR/>(fast, ideal for refinement)>]
+			fitter_bfgs [label=<<B>BFGS</B>>]
+		}
+		fitter_de [label=<<B>DE</B><BR/>Differential Evolution<BR/>(ideal for global search)>]
+	}
+	model_dspl -> fitter_mcmc [lhead=cluster_fitter ltail=cluster_models]
+	model_dspl -> fitter_mcmc [lhead=cluster_fitter ltail=cluster_models style=invis]
+	subgraph cluster_initguess {
+		color=none
+		init_guess [label=<<B>Boundary Conditions</B><BR/>or<BR/><B>Inital Guess</B><BR/>(can be from previous fit)> fillcolor="#FFF1CC"]
+	}
+	init_guess -> fitter_de [lhead=cluster_fitter]
+	subgraph cluster_objfunc {
+		label=<<B>Objective Function</B>>
+		node [fillcolor="#FFDAD5"]
+		objfunc_custom [label=Custom]
+		objfunc_likelihood [label="Log-Likelihood"]
+		objfunc_softl1 [label="Soft L1"]
+		objfunc_chisq [label="Chi Squared"]
+	}
+	objfunc_softl1 -> fitter_lm [lhead=cluster_fitter ltail=cluster_objfunc]
+	subgraph cluster_optional {
+		label=<Optional Modifications>
+		node [fillcolor="#FFF1CC"]
+		rescale_uncertainties [label=<<B>Rescale Uncertainties</B><BR/>(when uncertainties are<BR/>under-/over-estimated)>]
+		coord_origin [label=<<B>Coordinate Origin</B><BR/>(central, planetary<BR/>or manual)>]
+		fancyparams [label=<<B>Fancy Parameters</B><BR/>(modifies parameter space to<BR/>e.g. log-space)>]
+		prior [label=<<B>Prior Distribution</B><BR/>(Bayesian inference<BR/>when using MCMC)>]
+	}
+	fancyparams -> fitter_custom [lhead=cluster_fitter ltail=cluster_optional]
+	model_dspl -> rescale_uncertainties [style=invis]
+	subgraph cluster_results {
+		label=<Results>
+		results [label=<<B>Best Fit<BR/>Parameters</B><BR/>(posterior/uncertainty,<BR/>info criteria)> fillcolor="#98FFCA"]
+	}
+	fitter_lm -> results [lhead=cluster_results ltail=cluster_fitter]
+	results -> init_guess [constraint=false ltail=cluster_results style=invis]
+	results -> init_guess [constraint=false ltail=cluster_results style=invis]
+	results -> init_guess [constraint=false ltail=cluster_results style=invis]
+	results -> init_guess [constraint=false ltail=cluster_results style=invis]
+	results -> init_guess [constraint=false ltail=cluster_results style=invis]
+	results -> init_guess [constraint=false ltail=cluster_results style=invis]
+	results -> init_guess [constraint=false ltail=cluster_results]
+	subgraph cluster_physical {
+		label="Physical Interpretation"
+		physical_interpretation [label=<<B>pyLIMASS</B><BR/>infer mass> fillcolor="#90FF9B" shape=ellipse]
+	}
+	subgraph cluster_visualisation {
+		label=Visualisation
+		plot [label=<<B>Plot Lightcurve</B><BR/>pyLIMA_plots.plot_lightcurves()> fillcolor="#ABFFE3"]
+	}
+	results -> physical_interpretation [lhead=cluster_physical ltail=cluster_results]
+	results -> plot [lhead=cluster_visualisation ltail=cluster_results]
+	fontsize=24 label="pyLIMA Workflow" labelloc=t
+}
