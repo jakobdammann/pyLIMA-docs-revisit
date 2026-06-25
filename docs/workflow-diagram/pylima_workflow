@@ -10,38 +10,40 @@ digraph PyLIMA_Schematic_Workflow {
 		label=<<B>Telescope</B><BR/>telescopes.Telescope()>
 		node [fillcolor="#CFFBAF"]
 		sim_telescope [label=<<B>Simulated Telescope</B><BR/>(created with<BR/>simulations.simulator.simulate_a_telescope())> fillcolor="#E8FFC7"]
-		telescope [label=<<B>Telescope</B><BR/>(corresponds to<BR/>one dataset and<BR/>one filter)>]
+		telescope [label=<<B>Telescope</B><BR/>(corresponds to<BR/>one LC/AST-dataset)>]
 	}
 	subgraph cluster_data {
 		label=<Data>
 		node [fillcolor="#DDDDDD"]
 		subgraph cluster_data_telescope {
 			label=""
-			limb_darkening [label=<<B>Limb Darkening</B><BR/>Coefficients<BR/>(per Telescope &amp; Filter)>]
-			location [label=<<B>Location</B><BR/>(per Telescope)>]
-			filter [label=<<B>Filter</B><BR/>(per Lightcurve)>]
-			lightcurve [label=<<B>Lightcurve</B><BR/>or<BR/><B>Astrometry</B><BR/>(may have to be binned)>]
+			limb_darkening [label=<<B>Limb Darkening</B><BR/>Coefficients<BR/>(per LC/AST)>]
+			location [label=<<B>Location</B><BR/>(per LC/AST, <BR/>can also be defined by name of <BR/>telescope/observatory/survey)>]
+			filter [label=<<B>Filter</B><BR/>(per LC/AST)>]
+			lightcurve [label=<<B>Lightcurve</B> (LC)<BR/>or<BR/><B>Astrometry</B> (AST)<BR/>(may have to be binned)<BR/>[binning to be implemented]>]
 		}
-		ra_dec [label=<<B>RA, DEC</B><BR/>(coordinates of object)>]
+		ra_dec [label=<<B>RA, Dec</B><BR/>(coordinates of object)>]
+		gjd_hjd [label=<<B>GJD</B> or <B>HJD</B><BR/>Definition>]
 	}
 	subgraph cluster_event {
 		label=<<B>Event</B><BR/>event.Event()>
 		node [fillcolor="#A4FFAB"]
-		event [label=<<B>Event</B><BR/>(contains array <BR/>of Telescopes &amp; RA, DEC,<BR/>defines alignement data)>]
+		event [label=<<B>Event</B><BR/>(contains array <BR/>of Telescopes &amp; RA, DEC;<BR/>defines alignement data)>]
 	}
 	lightcurve -> telescope [lhead=cluster_telescope ltail=cluster_data_telescope]
 	telescope -> event [lhead=cluster_event ltail=cluster_telescope]
-	ra_dec -> event [lhead=cluster_event]
 	ra_dec -> telescope [style=invis]
+	ra_dec -> event [style=invis]
+	ra_dec -> event [lhead=cluster_event]
 	subgraph cluster_models {
 		label=<<B>Model</B><BR/>models.???model()>
 		node [fillcolor="#DCFAF4"]
 		model_usbl [label=<<B>USBL</B><BR/>Uniform Source Binary Lens<BR/>without LD, no caustic>]
-		model_fsbl [label=<<B>FSBL</B><BR/>Finite Source Binary Lens<BR/>with LD>]
+		model_fsbl [label=<<B>FSBL</B><BR/>Finite Source Binary Lens<BR/>with LD, caustic crossing>]
 		model_psbl [label=<<B>PSBL</B><BR/>Point Source Binary Lens>]
 		node [fillcolor="#B7DBFF"]
 		model_dspl [label=<<B>DSPL</B><BR/>Double Source Point Lens<BR/>no caustic, two peaks>]
-		model_fsplarge [label=<<B>FSPLarge</B>>]
+		model_fsplarge [label=<<B>FSPLarge</B><BR/>slower but more exact>]
 		model_fspl [label=<<B>FSPL</B><BR/>Finite Source Point Lens<BR/>with LD, short tE and/or small u0>]
 		model_pspl [label=<<B>PSPL</B><BR/>Point Source Point Lens>]
 	}
@@ -49,12 +51,13 @@ digraph PyLIMA_Schematic_Workflow {
 	subgraph cluster_additional {
 		label="Additional Modelling"
 		node [fillcolor="#F3E8FF"]
-		orbital_motion_lens [label=<<B>Orbital Motion of Lens</B>>]
+		orbital_motion_lens [label=<<B>Orbital Motion of Lens</B><BR/>2D, 3D or Keplerian>]
 		xallarap [label=<<B>Xallarap</B><BR/>orbital motion of source>]
-		parallax [label=<<B>Parallax</B><BR/>terrestrial, annual<BR/>and/or space>]
+		parallax [label=<<B>Parallax</B><BR/>terrestrial, annual<BR/>and/or space<BR/>(uses GJD)>]
 	}
 	xallarap -> model_fsbl [lhead=cluster_models ltail=cluster_additional]
 	event -> parallax [style=invis]
+	gjd_hjd -> parallax
 	subgraph cluster_fitter {
 		label=<<B>Fitter / Optimizer</B><BR/>fits.???fit()>
 		node [fillcolor="#FDEFA8"]
@@ -66,23 +69,24 @@ digraph PyLIMA_Schematic_Workflow {
 Optimizers
 (Bootstrap, MINUIT, etc.)" fillcolor="#FFFDC9"]
 		}
-		fitter_mcmc [label=<<B>MCMC</B><BR/>Mote-Carlo-Markov-Chain,<BR/>emcee<BR/>(slow, outputs posterior/uncertainty)> fillcolor="#FFBBA7"]
+		fitter_mcmc [label=<<B>MCMC</B><BR/>Markov-Chain-Monte-Carlo,<BR/>emcee<BR/>(slow, outputs posterior/uncertainty)> fillcolor="#FFBBA7"]
 		subgraph cluster_gradient {
 			label="Gradient-Like Fits"
 			node [fillcolor="#FFDCA0"]
 			fitter_trf [label=<<B>TRF</B><BR/>Trust Region Reflective>]
 			fitter_lm [label=<<B>LM</B><BR/>Levenberg-Marquardt<BR/>(fast, ideal for refinement)>]
-			fitter_bfgs [label=<<B>BFGS</B>>]
+			fitter_bfgs [label=<<B>BFGS</B><BR/>Broyden-Fletcher-Goldfarb-<BR/>Shanno-Algorithm>]
 		}
 		fitter_de [label=<<B>DE</B><BR/>Differential Evolution<BR/>(ideal for global search)>]
 	}
 	model_dspl -> fitter_mcmc [lhead=cluster_fitter ltail=cluster_models]
 	model_dspl -> fitter_mcmc [lhead=cluster_fitter ltail=cluster_models style=invis]
 	subgraph cluster_initguess {
-		color=none
-		init_guess [label=<<B>Boundary Conditions</B><BR/>or<BR/><B>Inital Guess</B><BR/>(can be from previous fit)> fillcolor="#FFF1CC"]
+		label=Input
+		boundary_condition [label=<<B>Boundary Condition</B><BR/>(for DE, TRF)> fillcolor="#FFF1CC"]
+		init_guess [label=<<B>Inital Guess</B><BR/>(can be from previous fit)> fillcolor="#FFF1CC"]
 	}
-	init_guess -> fitter_de [lhead=cluster_fitter]
+	boundary_condition:s -> fitter_de:n [lhead=cluster_fitter ltail=cluster_initguess]
 	subgraph cluster_objfunc {
 		label=<<B>Objective Function</B>>
 		node [fillcolor="#FFDAD5"]
@@ -95,9 +99,9 @@ Optimizers
 	subgraph cluster_optional {
 		label=<Optional Modifications>
 		node [fillcolor="#FFF1CC"]
-		rescale_uncertainties [label=<<B>Rescale Uncertainties</B><BR/>(when uncertainties are<BR/>under-/over-estimated)>]
+		rescale_uncertainties [label=<<B>Rescale Uncfertainties</B><BR/>one parameter<BR/>(when uncertainties are<BR/>under-/over-estimated)>]
 		coord_origin [label=<<B>Coordinate Origin</B><BR/>(central, planetary<BR/>or manual)>]
-		fancyparams [label=<<B>Fancy Parameters</B><BR/>(modifies parameter space to<BR/>e.g. log-space)>]
+		fancyparams [label=<<B>Fancy Parameters</B><BR/>(modifies parameter space to<BR/>e.g. linear-space, default: log-space)>]
 		prior [label=<<B>Prior Distribution</B><BR/>(Bayesian inference<BR/>when using MCMC)>]
 	}
 	fancyparams -> fitter_custom [lhead=cluster_fitter ltail=cluster_optional]

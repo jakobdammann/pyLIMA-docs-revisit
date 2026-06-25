@@ -46,7 +46,7 @@ with g.subgraph(name='cluster_telescope') as c:
         )
     c.node(
         'telescope',
-        '<<B>Telescope</B><BR/>(corresponds to<BR/>one dataset and<BR/>one filter)>'
+        '<<B>Telescope</B><BR/>(corresponds to<BR/>one LC/AST-dataset)>'
         )
 
 # Nodes
@@ -59,23 +59,27 @@ with g.subgraph(name='cluster_data') as c:
         cc.attr(label='')
         cc.node(
             'limb_darkening',
-            '<<B>Limb Darkening</B><BR/>Coefficients<BR/>(per Telescope &amp; Filter)>'
+            '<<B>Limb Darkening</B><BR/>Coefficients<BR/>(per LC/AST)>'
             )
         cc.node(
             'location',
-            '<<B>Location</B><BR/>(per Telescope)>'
+            '<<B>Location</B><BR/>(per LC/AST, <BR/>can also be defined by name of <BR/>telescope/observatory/survey)>'
             )
         cc.node(
             'filter',
-            '<<B>Filter</B><BR/>(per Lightcurve)>'
+            '<<B>Filter</B><BR/>(per LC/AST)>'
             )
         cc.node(
             'lightcurve',
-            '<<B>Lightcurve</B><BR/>or<BR/><B>Astrometry</B><BR/>(may have to be binned)>'
+            '<<B>Lightcurve</B> (LC)<BR/>or<BR/><B>Astrometry</B> (AST)<BR/>(may have to be binned)<BR/>[binning to be implemented]>'
             )
     c.node(
         'ra_dec',
-        '<<B>RA, DEC</B><BR/>(coordinates of object)>', 
+        '<<B>RA, Dec</B><BR/>(coordinates of object)>', 
+    )
+    c.node(
+        'gjd_hjd',
+        '<<B>GJD</B> or <B>HJD</B><BR/>Definition>', 
     )
 
 # Event
@@ -86,14 +90,16 @@ with g.subgraph(name='cluster_event') as c:
     # nodes
     c.node(
         'event',
-        '<<B>Event</B><BR/>(contains array <BR/>of Telescopes &amp; RA, DEC,<BR/>defines alignement data)>'
+        '<<B>Event</B><BR/>(contains array <BR/>of Telescopes &amp; RA, DEC;<BR/>defines alignement data)>'
         )
 
 # Edges
 g.edge('lightcurve', 'telescope', ltail='cluster_data_telescope', lhead='cluster_telescope')
 g.edge('telescope', 'event', ltail='cluster_telescope', lhead='cluster_event')
-g.edge('ra_dec', 'event', lhead='cluster_event')
 g.edge('ra_dec', 'telescope', style='invis')
+g.edge('ra_dec', 'event', style='invis')
+g.edge('ra_dec', 'event', lhead='cluster_event')
+
 
 ###########################################################################################################################################
 
@@ -109,7 +115,7 @@ with g.subgraph(name='cluster_models') as c:
     )
     c.node(
         'model_fsbl',
-        '<<B>FSBL</B><BR/>Finite Source Binary Lens<BR/>with LD>'
+        '<<B>FSBL</B><BR/>Finite Source Binary Lens<BR/>with LD, caustic crossing>'
     )
     c.node(
         'model_psbl',
@@ -122,7 +128,7 @@ with g.subgraph(name='cluster_models') as c:
     )
     c.node(
         'model_fsplarge',
-        '<<B>FSPLarge</B>>'
+        '<<B>FSPLarge</B><BR/>slower but more exact>'
     )
     c.node(
         'model_fspl',
@@ -144,7 +150,7 @@ with g.subgraph(name='cluster_additional') as c:
     # nodes
     c.node(
         'orbital_motion_lens',
-        '<<B>Orbital Motion of Lens</B>>',
+        '<<B>Orbital Motion of Lens</B><BR/>2D, 3D or Keplerian>',
         )
     c.node(
         'xallarap',
@@ -152,13 +158,14 @@ with g.subgraph(name='cluster_additional') as c:
         )
     c.node(
         'parallax',
-        '<<B>Parallax</B><BR/>terrestrial, annual<BR/>and/or space>',
+        '<<B>Parallax</B><BR/>terrestrial, annual<BR/>and/or space<BR/>(uses GJD)>',
         )
 
 # Edges
 g.edge('xallarap', 'model_fsbl', ltail='cluster_additional', lhead='cluster_models')
 # Invis Edges
 g.edge('event', 'parallax', style='invis')
+g.edge('gjd_hjd', 'parallax')
 # step.edge('model_pspl', 'model_fspl', style='invis')
 
 ###########################################################################################################################################
@@ -184,7 +191,7 @@ with g.subgraph(name='cluster_fitter') as c:
     # node mcmc
     c.node(
         'fitter_mcmc',
-        '<<B>MCMC</B><BR/>Mote-Carlo-Markov-Chain,<BR/>emcee<BR/>(slow, outputs posterior/uncertainty)>',
+        '<<B>MCMC</B><BR/>Markov-Chain-Monte-Carlo,<BR/>emcee<BR/>(slow, outputs posterior/uncertainty)>',
         fillcolor=COLORS['fitter_mc']
         )
     # cluster gradient methods
@@ -203,7 +210,7 @@ with g.subgraph(name='cluster_fitter') as c:
             )
         cc.node(
             'fitter_bfgs',
-            '<<B>BFGS</B>>',
+            '<<B>BFGS</B><BR/>Broyden-Fletcher-Goldfarb-<BR/>Shanno-Algorithm>',
             )
     # node de
     c.node(
@@ -223,14 +230,20 @@ g.edge('model_dspl', 'fitter_mcmc', ltail='cluster_models', lhead='cluster_fitte
 # Node Initial Guess
 with g.subgraph(name='cluster_initguess') as c:
     # attribute
-    c.attr(color='none')
+    c.attr(label='Input')
+    # c.attr(color='none')
     # node
     c.node(
-        'init_guess',
-        '<<B>Boundary Conditions</B><BR/>or<BR/><B>Inital Guess</B><BR/>(can be from previous fit)>',
+        'boundary_condition',
+        '<<B>Boundary Condition</B><BR/>(for DE, TRF)>',
         fillcolor=COLORS['fitter_input']
         )
-g.edge('init_guess', 'fitter_de', lhead='cluster_fitter')
+    c.node(
+        'init_guess',
+        '<<B>Inital Guess</B><BR/>(can be from previous fit)>',
+        fillcolor=COLORS['fitter_input']
+        )
+g.edge('boundary_condition:s', 'fitter_de:n', ltail='cluster_initguess', lhead='cluster_fitter')
 
 # Cluster Objective Functions
 with g.subgraph(name='cluster_objfunc') as c:
@@ -264,7 +277,7 @@ with g.subgraph(name='cluster_optional') as c:
     # Node Rescale Uncertainties
     c.node(
         'rescale_uncertainties',
-        '<<B>Rescale Uncertainties</B><BR/>(when uncertainties are<BR/>under-/over-estimated)>',
+        '<<B>Rescale Uncfertainties</B><BR/>one parameter<BR/>(when uncertainties are<BR/>under-/over-estimated)>',
         )
     # Node Coordinate Origin
     c.node(
@@ -274,7 +287,7 @@ with g.subgraph(name='cluster_optional') as c:
     # Node Fancy Parameters
     c.node(
         'fancyparams',
-        '<<B>Fancy Parameters</B><BR/>(modifies parameter space to<BR/>e.g. log-space)>',
+        '<<B>Fancy Parameters</B><BR/>(modifies parameter space to<BR/>e.g. linear-space, default: log-space)>',
         )
     # Node Prior
     c.node(
@@ -346,4 +359,4 @@ g.edge('results', 'plot', ltail='cluster_results', lhead='cluster_visualisation'
 g.attr(label="pyLIMA Workflow", labelloc="t", fontsize="24")
 
 # Render PDF
-g.render('./diagram/pylima_workflow', view=False)
+g.render('./pyLIMA-docs-revisit/docs/workflow-diagram/pylima_workflow', view=False)
