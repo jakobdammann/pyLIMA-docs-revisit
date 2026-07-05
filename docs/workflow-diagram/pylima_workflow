@@ -18,12 +18,11 @@ digraph PyLIMA_Schematic_Workflow {
 		subgraph cluster_data_telescope {
 			label=""
 			limb_darkening [label=<<B>Limb Darkening</B><BR/>Coefficients<BR/>(per LC/AST)>]
-			location [label=<<B>Location</B><BR/>(per LC/AST, <BR/>can also be defined by name of <BR/>telescope/observatory/survey)>]
+			location [label=<<B>Location</B><BR/>(per LC/AST)<BR/><BR/>can also be defined by name of<BR/>telescope/observatory/survey>]
 			filter [label=<<B>Filter</B><BR/>(per LC/AST)>]
-			lightcurve [label=<<B>Lightcurve</B> (LC)<BR/>or<BR/><B>Astrometry</B> (AST)<BR/>(may have to be binned)<BR/>[binning to be implemented]>]
+			lightcurve [label=<<B>Lightcurve</B> (LC)<BR/>or<BR/><B>Astrometry</B> (AST)<BR/>JD time series<BR/><BR/>(may have to be binned)<BR/>[binning to be implemented]>]
 		}
 		ra_dec [label=<<B>RA, Dec</B><BR/>(coordinates of object)>]
-		gjd_hjd [label=<<B>GJD</B> or <B>HJD</B><BR/>Definition>]
 	}
 	subgraph cluster_event {
 		label=<<B>Event</B><BR/>event.Event()>
@@ -53,11 +52,10 @@ digraph PyLIMA_Schematic_Workflow {
 		node [fillcolor="#F3E8FF"]
 		orbital_motion_lens [label=<<B>Orbital Motion of Lens</B><BR/>2D, 3D or Keplerian>]
 		xallarap [label=<<B>Xallarap</B><BR/>orbital motion of source>]
-		parallax [label=<<B>Parallax</B><BR/>terrestrial, annual<BR/>and/or space<BR/>(uses GJD)>]
+		parallax [label=<<B>Parallax</B><BR/>terrestrial, annual<BR/>and/or space<BR/>(JD has to be GJD)>]
 	}
 	xallarap -> model_fsbl [lhead=cluster_models ltail=cluster_additional]
 	event -> parallax [style=invis]
-	gjd_hjd -> parallax
 	subgraph cluster_fitter {
 		label=<<B>Fitter / Optimizer</B><BR/>fits.???fit()>
 		node [fillcolor="#FDEFA8"]

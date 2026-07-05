@@ -63,7 +63,7 @@ with g.subgraph(name='cluster_data') as c:
             )
         cc.node(
             'location',
-            '<<B>Location</B><BR/>(per LC/AST, <BR/>can also be defined by name of <BR/>telescope/observatory/survey)>'
+            '<<B>Location</B><BR/>(per LC/AST)<BR/><BR/>can also be defined by name of<BR/>telescope/observatory/survey>'
             )
         cc.node(
             'filter',
@@ -71,16 +71,16 @@ with g.subgraph(name='cluster_data') as c:
             )
         cc.node(
             'lightcurve',
-            '<<B>Lightcurve</B> (LC)<BR/>or<BR/><B>Astrometry</B> (AST)<BR/>(may have to be binned)<BR/>[binning to be implemented]>'
+            '<<B>Lightcurve</B> (LC)<BR/>or<BR/><B>Astrometry</B> (AST)<BR/>JD time series<BR/><BR/>(may have to be binned)<BR/>[binning to be implemented]>'
             )
     c.node(
         'ra_dec',
         '<<B>RA, Dec</B><BR/>(coordinates of object)>', 
     )
-    c.node(
-        'gjd_hjd',
-        '<<B>GJD</B> or <B>HJD</B><BR/>Definition>', 
-    )
+    # c.node(
+    #     'gjd_hjd',
+    #     '<<B>GJD</B> or <B>HJD</B><BR/>Definition>', 
+    # )
 
 # Event
 with g.subgraph(name='cluster_event') as c:
@@ -158,14 +158,14 @@ with g.subgraph(name='cluster_additional') as c:
         )
     c.node(
         'parallax',
-        '<<B>Parallax</B><BR/>terrestrial, annual<BR/>and/or space<BR/>(uses GJD)>',
+        '<<B>Parallax</B><BR/>terrestrial, annual<BR/>and/or space<BR/>(JD has to be GJD)>',
         )
 
 # Edges
 g.edge('xallarap', 'model_fsbl', ltail='cluster_additional', lhead='cluster_models')
 # Invis Edges
 g.edge('event', 'parallax', style='invis')
-g.edge('gjd_hjd', 'parallax')
+# g.edge('gjd_hjd', 'parallax')
 # step.edge('model_pspl', 'model_fspl', style='invis')
 
 ###########################################################################################################################################
