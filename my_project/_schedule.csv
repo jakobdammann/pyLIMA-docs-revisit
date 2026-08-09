@@ -1,0 +1,20 @@
+#week,  day,    hours,  note
+1,      13.04., 3,      first example and docs
+1,      17.04., 1,      example 2
+2,      20.04., 1,      example 3
+2,      22.04., 2,      example 3/3b/4
+2,      24.02., 1,      test.ipynb
+4,      06.05., 5,      workflow diagram
+4,      07.05., 1,      meeting
+6,      18.05., 4,      diagram rework
+6,      19.05., 3,      diagram
+6,      21.05., 1,      meeting
+9,      12.06., 1,      meeting
+11,     25.06., 2,      diagram finalizing
+11,     29.06., 1,      example 1 rework
+11,     29.06., 1,      meeting
+12,     05.07., 4,      robust loss example
+13,     08.07., 1,      meeting 
+17,     05.08., 2,      testing parallax
+17,     07.08., 2,      parallax example
+17,     09.08., 2,      parrallax and bokeh plots

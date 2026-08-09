@@ -1,0 +1,54 @@
+NOTES
+
+Why is it only possible with microlensing to get exoplanet statistics? 
+
+What am I supossd to seee in the u0 tE correlation?
+Why is the limb darkening relevant?
+
+Why doesn't the fancy parameter stuff in tutorial 2 work? 
+How does it work? Is it iterating through a parameter grid?
+
+Difference ftotal/fsource? Why are these telescope specific?
+Tutorial 3: Difference between two last plots minimal?
+Tutorial 4/5: Why is Spitzer off?
+pyLIMASS does mass calculation?
+MicroLModels/Caustics don't exist anymore?
+
+loss function / objective function (badness of fit)
+alles was unter fits ist sind optimierer/fitter
+hinzufügen: fit auswählen - likelihood/chi2, rescale errorbars
+other fit methods --> opitional development optimizers
+
+
+21.05.2026:
+add Flux Parameter Handling to Model or Fitter
+Time (system) input missing
+BFGS and FSPLarge needed?
+Model descriptions
+
+trf - works with pspl right away
+
+
+
+example loss function
+- try differnt loss functions, nothing: maximize likelihood
+- robust loss: maximize soft l1 of likelihood
+- write soft l1 definition in text
+- chi2: not robust, does not rescale errorbars
+- example 5? or 1 with manual outliers
+
+
+example parallax
+- use example 3b as template
+- no parallax, just space & annual, full
+- sim another earth telescope in hawaii, see with terrestiral and without
+- minimal Difference
+- GJD needed for parallax
+
+
+
+OMOL (only for binarly lens)
+
+Parralax (JD has to be GJD)
+remove HJD or GJD
+put JD to Lightcurve
