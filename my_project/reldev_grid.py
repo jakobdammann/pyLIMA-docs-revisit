@@ -106,7 +106,7 @@ def reldev(q, t, u0, te, t0, fs, fb, ferr, rs, xp, yp):
 
 # --- Main Execution Block for Grid Calculation ---
 
-def run_grid_analysis(t, u0, te, t0, fs, fb, ferr, rs, x_min=-2.0, x_max=2.0, y_min=-2.0, y_max=2.0, resolution=10):
+def run_grid_analysis(t, q, u0, te, t0, fs, fb, ferr, rs, x_min=-2.0, x_max=2.0, y_min=-2.0, y_max=2.0, resolution=10):
     """
     Performs the analysis by iterating over a specified grid of (xp, yp) values
     and calling reldev for each point.
@@ -122,7 +122,7 @@ def run_grid_analysis(t, u0, te, t0, fs, fb, ferr, rs, x_min=-2.0, x_max=2.0, y_
             try:
                 # Call the non-vectorizable function
                 result = reldev(
-                    q=0.001,         
+                    q=q,         
                     t=t, u0=u0, te=te, t0=t0, 
                     fs=fs, fb=fb, ferr=ferr, rs=rs, 
                     xp=xp, yp=yp
@@ -152,30 +152,30 @@ def run_grid_analysis_and_plot(
     x_range = np.linspace(x_min, x_max, resolution)
     y_range = np.linspace(y_min, y_max, resolution)
     
-    # Initialize storage for results (dictionary key: (xp, yp), value: result tuple)
-    results = {}
+    # # Initialize storage for results (dictionary key: (xp, yp), value: result tuple)
+    # results = {}
     
-    # 2. Iterative Function Calls (The inherent limitation: reldev is not vectorizable)
-    print(f"Iterating over a grid of {resolution} x {resolution} points (this step is slow)...")
+    # # 2. Iterative Function Calls (The inherent limitation: reldev is not vectorizable)
+    # print(f"Iterating over a grid of {resolution} x {resolution} points (this step is slow)...")
     
-    # --- EXECUTION BLOCK ---
-    for xp in x_range:
-        for yp in y_range:
-            try:
-                # Call the expensive, non-vectorizable function
-                result = reldev(
-                    q, t=t, u0=u0, te=te, t0=t0, 
-                    fs=fs, fb=fb, ferr=ferr, rs=rs, 
-                    xp=xp, yp=yp
-                )
+    # # --- EXECUTION BLOCK ---
+    # for xp in x_range:
+    #     for yp in y_range:
+    #         try:
+    #             # Call the expensive, non-vectorizable function
+    #             result = reldev(
+    #                 q, t=t, u0=u0, te=te, t0=t0, 
+    #                 fs=fs, fb=fb, ferr=ferr, rs=rs, 
+    #                 xp=xp, yp=yp
+    #             )
                 
-                # Store results keyed by the input coordinates
-                results[(xp, yp)] = result
-            except Exception as e:
-                print(f"Error at ({xp:.2f}, {yp:.2f}): {e}")
-                results[(xp, yp)] = (np.nan, np.nan) # Store NaN if calculation fails
+    #             # Store results keyed by the input coordinates
+    #             results[(xp, yp)] = result
+    #         except Exception as e:
+    #             print(f"Error at ({xp:.2f}, {yp:.2f}): {e}")
+    #             results[(xp, yp)] = (np.nan, np.nan) # Store NaN if calculation fails
 
-    print("--- Planet Grid on Lens Plane Complete ---")
+    # print("--- Planet Grid on Lens Plane Complete ---")
         
     X_grid, Y_grid = np.meshgrid(x_range, y_range)
     
@@ -228,15 +228,15 @@ def plot_heatmap(X, Y, Z, x_range, y_range):
     plt.show()
 
 if __name__ == '__main__':
-    q = 0.002
-    t = 7775.
-    u0 = 0.3
-    te = 30.0
+    q = 0.001 # assumption
+    rho = 0.0005
+    t = 7775. # from datapoint
+    ferr = 0.02
+    u0 = 0.3 # from fit
+    te = 10.0
     t0 = 7777.0
     fs = 1.0
     fb = 0.0 # Not used in the provided snippet, for the future
-    ferr = 0.02
-    rho = 0.0005
     
     run_grid_analysis_and_plot(q=q,
         t=t, u0=u0, te=te, t0=t0, fs=fs, fb=fb, ferr=ferr, rs=rho,resolution=250, resolution_interpol=5

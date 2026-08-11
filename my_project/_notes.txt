@@ -52,3 +52,16 @@ OMOL (only for binarly lens)
 Parralax (JD has to be GJD)
 remove HJD or GJD
 put JD to Lightcurve
+
+APPOINTMENTS:
+mi 12. 11:00
+mo 17. 11:00
+do 18. 16:00
+mo 31. 11:00
+mi 02. 11:00
+
+TODO:
+use lightcurvelynx instead of pylima simulator
+sinistro camera values
+
+implement reldv into example 3
