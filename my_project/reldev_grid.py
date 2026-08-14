@@ -104,9 +104,12 @@ def reldev(q, t, u0, te, t0, fs, fb, ferr, rs, xp, yp):
         # Case where d <= 0.005
         return 0.0#, q, xp, yp, s, rs, 1.0, 1.0, -1.0
 
+
 # --- Main Execution Block for Grid Calculation ---
 
-def run_grid_analysis(t, q, u0, te, t0, fs, fb, ferr, rs, x_min=-2.0, x_max=2.0, y_min=-2.0, y_max=2.0, resolution=10):
+def run_grid_analysis(t, q, u0, te, t0, fs, fb, ferr, rs, 
+                      x_min=-2.0, x_max=2.0, y_min=-2.0, y_max=2.0, resolution=10
+                      ):
     """
     Performs the analysis by iterating over a specified grid of (xp, yp) values
     and calling reldev for each point.
@@ -148,35 +151,10 @@ def run_grid_analysis_and_plot(
     """
     print("--- Starting Grid Analysis ---")
     
-    # 1. Setup Grid Coordinates
+    # Setup Grid Coordinates
     x_range = np.linspace(x_min, x_max, resolution)
     y_range = np.linspace(y_min, y_max, resolution)
-    
-    # # Initialize storage for results (dictionary key: (xp, yp), value: result tuple)
-    # results = {}
-    
-    # # 2. Iterative Function Calls (The inherent limitation: reldev is not vectorizable)
-    # print(f"Iterating over a grid of {resolution} x {resolution} points (this step is slow)...")
-    
-    # # --- EXECUTION BLOCK ---
-    # for xp in x_range:
-    #     for yp in y_range:
-    #         try:
-    #             # Call the expensive, non-vectorizable function
-    #             result = reldev(
-    #                 q, t=t, u0=u0, te=te, t0=t0, 
-    #                 fs=fs, fb=fb, ferr=ferr, rs=rs, 
-    #                 xp=xp, yp=yp
-    #             )
-                
-    #             # Store results keyed by the input coordinates
-    #             results[(xp, yp)] = result
-    #         except Exception as e:
-    #             print(f"Error at ({xp:.2f}, {yp:.2f}): {e}")
-    #             results[(xp, yp)] = (np.nan, np.nan) # Store NaN if calculation fails
-
-    # print("--- Planet Grid on Lens Plane Complete ---")
-        
+            
     X_grid, Y_grid = np.meshgrid(x_range, y_range)
     
     def vectorized_reldev_wrapper(X_arr, Y_arr):
@@ -186,46 +164,83 @@ def run_grid_analysis_and_plot(
         vectorized_func = np.vectorize(lambda x, y: reldev(q, t, u0, te, t0, fs, fb, ferr, rs, x, y))
         return vectorized_func(X_arr, Y_arr)
 
-    try:
-        Z = np.log10(vectorized_reldev_wrapper(X_grid, Y_grid))
-           
-        x_fine = np.linspace(x_min, x_max, resolution * resolution_interpol)
-        y_fine = np.linspace(y_min, y_max, resolution * resolution_interpol)   
-        X_f, Y_f = np.meshgrid(x_fine, y_fine)
-        interp_func = interpolate.RegularGridInterpolator((x_range, y_range), Z.T, method="linear")
-        # Plotting the result
-        points = np.array([X_f.ravel(), Y_f.ravel()]).T
-        Z_fine = interp_func(points).reshape(X_f.shape)
-        plot_heatmap(X_f, Y_f, Z_fine, x_fine, y_fine)
-        
-    except Exception as e:
-        print(f"\nERROR during plotting preparation: {e}")
+    # Computing reldev
+    Z = np.log10(vectorized_reldev_wrapper(X_grid, Y_grid))
 
-def plot_heatmap(X, Y, Z, x_range, y_range):
+    # Interpolating for higher resolution
+    x_fine = np.linspace(x_min, x_max, resolution * resolution_interpol)
+    y_fine = np.linspace(y_min, y_max, resolution * resolution_interpol)   
+    X_f, Y_f = np.meshgrid(x_fine, y_fine)
+    interp_func = interpolate.RegularGridInterpolator((x_range, y_range), Z.T, method="linear")
+
+    # Plotting the result
+    points = np.array([X_f.ravel(), Y_f.ravel()]).T
+    Z_fine = interp_func(points).reshape(X_f.shape)
+    plot_heatmap(X_f, Y_f, Z_fine, 
+                 add_trajectory=True, t0=t0, u0=u0, te=te
+                 )
+        
+    print("--- Planet Grid on Lens Plane Complete ---")
+
+
+def plot_heatmap(X, Y, Z, 
+                 Zmin=-5, Zmax=5, 
+                 add_cbar=True, add_contour=True, add_grid=True, add_tE=True,
+                 add_trajectory=False, t0=None, u0=None, te=None, t=None,
+                 show_plot=True
+                ):
     """Helper function to generate the colored contour plot."""
     import matplotlib.pyplot as plt
     import matplotlib.cm as cm
 
+    # create fig
+    plt.figure(figsize=(8, 7))
 
-    plt.figure(figsize=(10, 10))
-    contour = plt.pcolormesh(X, Y, Z, shading='auto', cmap=cm.turbo,vmin = -5,vmax=5)
-    plt.colorbar(contour, label='Metric Value ($\\log_{10}(\\Delta\\mu/\\mu$))')
-    plt.contour(X, Y, Z, levels=14, colors='green', linewidths=0.7)
+    # heatmap
+    contour = plt.pcolormesh(X, Y, Z, shading='auto', cmap=cm.turbo, vmin=Zmin, vmax=Zmax)
+    if add_contour:
+        plt.contour(X, Y, Z, levels=14, colors='k', linewidths=0.7, alpha=0.3)
 
+    # Einstein radius
+    if add_tE:
+        theta = np.linspace(0, 2 * np.pi, 100)
+        radius = 1
+        x = radius * np.cos(theta)
+        y = radius * np.sin(theta)
+        plt.plot(x, y, linestyle='--', lw=1, color='darkblue', label="$\\theta_E$")
 
+    # grid
+    if add_grid:
+        plt.grid(True, linestyle='--', alpha=0.6)
+
+    # colorbar
+    if add_cbar:
+        plt.colorbar(contour, label='Metric Value ($\\log_{10}(\\Delta\\mu/\\mu$))')
+
+    # source trajectory
+    if add_trajectory:
+        plt.hlines(u0, xmin=np.min(X), xmax=np.max(X), 
+                   linestyle='-', lw=1, color='k', label="Source Trajectory", zorder=1
+                   )
+        if t is not None:
+            bsx = (t - t0) / te
+            bsy = u0
+            plt.scatter(bsx, np.ones_like(bsx)*bsy, s=4, c='red', marker='x', label='Datapoints',
+                        zorder=2)
+
+    # labels
     plt.xlabel('X lens plane ($\\theta_{\\rm E}$)')
     plt.ylabel('Y lens plane ($\\theta_{\\rm E}$)')
-    theta = np.linspace(0, 2 * np.pi, 100)
-    radius = 1
-    x = radius * np.cos(theta)
-    y = radius * np.sin(theta)
+    plt.legend(loc='lower right')
 
-    plt.plot(x, y, linestyle='--', color='darkblue',label="$\\theta_E$",lw=3)
-
+    # title
     plt.title('Relative deviation caused by 2nd lens $\\log_{10}(\\Delta\\mu/\\mu$))')
     plt.gca().set_aspect('equal', adjustable='box')
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.show()
+
+    # show
+    if show_plot:
+        plt.show()
+
 
 if __name__ == '__main__':
     q = 0.001 # assumption
