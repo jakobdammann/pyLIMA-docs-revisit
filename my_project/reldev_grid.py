@@ -225,7 +225,7 @@ def plot_heatmap(X, Y, Z,
         if t is not None:
             bsx = (t - t0) / te
             bsy = u0
-            plt.scatter(bsx, np.ones_like(bsx)*bsy, s=4, c='red', marker='x', label='Datapoints',
+            plt.scatter(bsx, np.ones_like(bsx)*bsy, s=2, c='red', marker='x', label='Datapoints',
                         zorder=2)
 
     # labels
