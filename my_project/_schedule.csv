@@ -21,5 +21,5 @@
 18,     10.08., 4,      meeting & reldev detection zone
 18,     11.08., 3,      reldev detection zone
 18,     12.08., 2,      meeting
-18,     13.08., 6,      simulate PSBL & planet probability
-18,     14.08., 3,      
+18,     13.08., 6,      simulate PSBL & map weights
+18,     14.08., 5,      code and plot enhancements & weight fix

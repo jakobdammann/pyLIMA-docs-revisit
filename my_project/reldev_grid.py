@@ -1,26 +1,19 @@
-
-import uncertainties
-import matplotlib
-import numpy as np
+import sys
 import os
-from math import log
-from math import log10
-from scipy import stats
-from math import exp
-from math import pi
-from math import sqrt
-from math import atan2
-from math import asin
+import math
+import numpy as np
+
 from scipy.optimize import fmin_tnc
 from scipy import special
 from scipy import interpolate
 from operator import itemgetter, attrgetter
 from scipy.integrate import quad
-from math import sin
+
 import matplotlib
 import matplotlib.pyplot as plt
-import sys
-import numpy as np
+import matplotlib.colors as colors
+import matplotlib.cm as cm
+
 import VBBinaryLensing
 VBB=VBBinaryLensing.VBBinaryLensing()
 VBB.Tol=float(0.001)
@@ -165,7 +158,7 @@ def run_grid_analysis_and_plot(
         return vectorized_func(X_arr, Y_arr)
 
     # Computing reldev
-    Z = np.log10(vectorized_reldev_wrapper(X_grid, Y_grid))
+    Z = vectorized_reldev_wrapper(X_grid, Y_grid)
 
     # Interpolating for higher resolution
     x_fine = np.linspace(x_min, x_max, resolution * resolution_interpol)
@@ -177,29 +170,29 @@ def run_grid_analysis_and_plot(
     points = np.array([X_f.ravel(), Y_f.ravel()]).T
     Z_fine = interp_func(points).reshape(X_f.shape)
     plot_heatmap(X_f, Y_f, Z_fine, 
-                 add_trajectory=True, t0=t0, u0=u0, te=te
+                 add_trajectory=True, t0=t0, u0=u0, te=te, t=t
                  )
         
     print("--- Planet Grid on Lens Plane Complete ---")
 
 
 def plot_heatmap(X, Y, Z, 
-                 Zmin=-5, Zmax=5, 
-                 add_cbar=True, add_contour=True, add_grid=True, add_tE=True,
+                 add_cbar=True, norm=colors.LogNorm(1e-5, 1e5),
+                 add_contour=True, add_grid=True, add_tE=True,
                  add_trajectory=False, t0=None, u0=None, te=None, t=None,
                  show_plot=True
                 ):
     """Helper function to generate the colored contour plot."""
-    import matplotlib.pyplot as plt
-    import matplotlib.cm as cm
 
     # create fig
     plt.figure(figsize=(8, 7))
 
     # heatmap
-    contour = plt.pcolormesh(X, Y, Z, shading='auto', cmap=cm.turbo, vmin=Zmin, vmax=Zmax)
+    contour = plt.pcolormesh(X, Y, Z, 
+                             shading='auto', cmap=cm.turbo, norm=norm
+                             )
     if add_contour:
-        plt.contour(X, Y, Z, levels=14, colors='k', linewidths=0.7, alpha=0.3)
+        plt.contour(X, Y, Z, levels=14, colors='k', linewidths=0.7, alpha=0.3, norm=norm)
 
     # Einstein radius
     if add_tE:
@@ -215,17 +208,19 @@ def plot_heatmap(X, Y, Z,
 
     # colorbar
     if add_cbar:
-        plt.colorbar(contour, label='Metric Value ($\\log_{10}(\\Delta\\mu/\\mu$))')
+        plt.colorbar(contour, label='Metric Value $\\Delta\\mu/\\mu$')
 
     # source trajectory
     if add_trajectory:
         plt.hlines(u0, xmin=np.min(X), xmax=np.max(X), 
-                   linestyle='-', lw=1, color='k', label="Source Trajectory", zorder=1
+                   linestyle='-', lw=1, color='k', label="Source Trajectory", 
+                   zorder=1
                    )
         if t is not None:
             bsx = (t - t0) / te
             bsy = u0
-            plt.scatter(bsx, np.ones_like(bsx)*bsy, s=2, c='red', marker='x', label='Datapoints',
+            plt.scatter(bsx, np.ones_like(bsx)*bsy, 
+                        s=2, c='red', marker='x', label='Source Pos. at Obs.', 
                         zorder=2)
 
     # labels
@@ -234,7 +229,7 @@ def plot_heatmap(X, Y, Z,
     plt.legend(loc='lower right')
 
     # title
-    plt.title('Relative deviation caused by 2nd lens $\\log_{10}(\\Delta\\mu/\\mu$))')
+    plt.title('Relative deviation caused by 2nd lens')
     plt.gca().set_aspect('equal', adjustable='box')
 
     # show
@@ -244,7 +239,7 @@ def plot_heatmap(X, Y, Z,
 
 if __name__ == '__main__':
     q = 0.001 # assumption
-    rho = 0.0005
+    rs = 0.0005
     t = 7775. # from datapoint
     ferr = 0.02
     u0 = 0.3 # from fit
@@ -253,8 +248,9 @@ if __name__ == '__main__':
     fs = 1.0
     fb = 0.0 # Not used in the provided snippet, for the future
     
-    run_grid_analysis_and_plot(q=q,
-        t=t, u0=u0, te=te, t0=t0, fs=fs, fb=fb, ferr=ferr, rs=rho,resolution=250, resolution_interpol=5
+    run_grid_analysis_and_plot(t=t, u0=u0, te=te, t0=t0, 
+        fs=fs, fb=fb, ferr=ferr, q=q, rs=rs,
+        resolution=250, resolution_interpol=5
     )
 
 
