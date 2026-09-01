@@ -65,3 +65,19 @@ use lightcurvelynx instead of pylima simulator
 sinistro camera values
 
 implement reldv into example 3
+
+
+overplot theoretical curves of images
+normalized vector from bsx, bsy
+multiply by distance uplus, uminus
+
+delta mu / mu wrong --> sum chi^2
+title: weighted relative devioation
+
+start trf fits with sampled points from map distribution
+maybe try with log density
+
+multithreading?
+jit in jax
+
+9.9. 11:00 Meeting Zoom oder Slack

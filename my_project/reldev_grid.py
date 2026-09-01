@@ -177,7 +177,7 @@ def run_grid_analysis_and_plot(
 
 
 def plot_heatmap(X, Y, Z, 
-                 add_cbar=True, norm=colors.LogNorm(1e-5, 1e5),
+                 add_cbar=True, norm=colors.LogNorm(1e-5, 1e5), cbar_label='$\\sum\,\\chi^2$',
                  add_contour=True, add_grid=True, add_tE=True,
                  add_trajectory=False, t0=None, u0=None, te=None, t=None,
                  show_plot=True
@@ -208,7 +208,7 @@ def plot_heatmap(X, Y, Z,
 
     # colorbar
     if add_cbar:
-        plt.colorbar(contour, label='Metric Value $\\Delta\\mu/\\mu$')
+        plt.colorbar(contour, label=cbar_label)
 
     # source trajectory
     if add_trajectory:
@@ -222,6 +222,24 @@ def plot_heatmap(X, Y, Z,
             plt.scatter(bsx, np.ones_like(bsx)*bsy, 
                         s=2, c='red', marker='x', label='Source Pos. at Obs.', 
                         zorder=2)
+
+
+    # image trajectories
+    if add_trajectory:
+        t_arr = np.linspace(t0-10, t0+10, 100)
+        bsx = (t_arr - t0) / te
+        bsy = u0
+
+        u_sqr = u0**2 + ((t_arr - t0) / te)**2
+        u_sqrt4 = (u_sqr + 4.)**0.5
+        u = np.sqrt(u_sqr)
+        
+        u_plus = 0.5 * (u + u_sqrt4)
+        u_minus = 0.5 * (u - u_sqrt4)
+
+        plt.plot(bsx*u_plus, bsy*u_plus, linestyle=':', lw=1, color='darkblue', label="Image Trajectory")
+        plt.plot(bsx*u_minus, bsy*u_minus, linestyle=':', lw=1, color='darkblue')
+
 
     # labels
     plt.xlabel('X lens plane ($\\theta_{\\rm E}$)')
