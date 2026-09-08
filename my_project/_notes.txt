@@ -77,7 +77,11 @@ title: weighted relative devioation
 start trf fits with sampled points from map distribution
 maybe try with log density
 
+put code into functions
+
 multithreading?
 jit in jax
 
 9.9. 11:00 Meeting Zoom oder Slack
+
+try my_fit.fit_outputs() for plots

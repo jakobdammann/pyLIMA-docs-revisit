@@ -237,8 +237,8 @@ def plot_heatmap(X, Y, Z,
         u_plus = 0.5 * (u + u_sqrt4)
         u_minus = 0.5 * (u - u_sqrt4)
 
-        plt.plot(bsx*u_plus, bsy*u_plus, linestyle=':', lw=1, color='darkblue', label="Image Trajectory")
-        plt.plot(bsx*u_minus, bsy*u_minus, linestyle=':', lw=1, color='darkblue')
+        plt.plot(bsx*u_plus/u, bsy*u_plus/u, linestyle=':', lw=1, color='darkblue', label="Image Trajectory")
+        plt.plot(bsx*u_minus/u, bsy*u_minus/u, linestyle=':', lw=1, color='darkblue')
 
 
     # labels
