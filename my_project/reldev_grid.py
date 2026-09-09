@@ -226,7 +226,7 @@ def plot_heatmap(X, Y, Z,
 
     # image trajectories
     if add_trajectory:
-        t_arr = np.linspace(t0-10, t0+10, 100)
+        t_arr = np.linspace(t0-te, t0+te, 100)
         bsx = (t_arr - t0) / te
         bsy = u0
 
@@ -242,9 +242,10 @@ def plot_heatmap(X, Y, Z,
 
 
     # labels
-    plt.xlabel('X lens plane ($\\theta_{\\rm E}$)')
-    plt.ylabel('Y lens plane ($\\theta_{\\rm E}$)')
-    plt.legend(loc='lower right')
+    plt.xlabel('X lens plane [$\\theta_{\\rm E}$]')
+    plt.ylabel('Y lens plane [$\\theta_{\\rm E}$]')
+    if plt.gca().get_legend_handles_labels()[1]:
+        plt.legend(loc='lower right')
 
     # title
     plt.title('Relative deviation caused by 2nd lens')
