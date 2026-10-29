@@ -27,22 +27,21 @@ class PlanetAnomalyMap(object):
     ----------
 
     event : pyLIMA event object
-    window_limits: (tuple x limits,tuple)
+    window_limits: ((float,float),(float,float)), x and y limits of lightcurve plot
     """
 
     def __init__(self, event, window_limits=None):
         self.event = event
-
-        self.ax_xlim = window_limits[0]
-        self.ax_ylim = window_limits[1]
+        self.window_limits = window_limits
 
     #########
     # UTILS #
     #########
 
     def _set_window_limits(self, ax):
-        ax.set_xlim(*self.ax_xlim)
-        ax.set_ylim(*self.ax_ylim)
+        if self.window_limits is not None:
+            ax.set_xlim(*self.window_limits[0])
+            ax.set_ylim(*self.window_limits[1])
 
     #############
     # PSPL STEP #
@@ -54,7 +53,7 @@ class PlanetAnomalyMap(object):
         self.pspl = PSPL_model.PSPLmodel(self.event)
         # Robust fit
         self.pspl_fit = TRF_fit.TRFfit(self.pspl, loss_function='soft_l1')
-        if parameter_guess != None:
+        if parameter_guess is not None:
             self.pspl_fit.model_parameters_guess = parameter_guess
         self.pspl_fit.fit()
         self.pspl_params =  OrderedDict(zip(self.pspl_fit.priors_parameters.keys(), 
@@ -81,7 +80,7 @@ class PlanetAnomalyMap(object):
 
         # show
         if show:
-            plt.show()
+            fig.show()
         return fig
 
     ###########################
@@ -89,22 +88,17 @@ class PlanetAnomalyMap(object):
     ###########################
 
     def create_planet_anomaly_map(self, 
-                                  meshgrid_corners=((-2.0,2.0),(-2.0,2.0)), 
-                                  resolution=100):
-        verbose = False
-
-        # assumptions
-        q = 0.001 
-        rs = 0.0005
-
+                                  meshgrid_corners=((-2.0,2.0),(-2.0,2.0)), resolution=100,
+                                  q=0.001, rs=0.0005, dt=5,
+                                  verbose=False):
         # algorithm parameters
-        t_range = (self.t0 - 5, self.t0 + 5) # distance from t0 to compute reldev [in JD]
+        t_range = (self.t0 - dt, self.t0 + dt) # distance interval around t0 to compute reldev [in JD]
 
         # Setup Meshgrid
         x_min = meshgrid_corners[0][0]
         x_max = meshgrid_corners[0][1]
         y_min = meshgrid_corners[1][0]
-        y_max = meshgrid_corners[0][1]
+        y_max = meshgrid_corners[1][1]
         self.x_range = np.linspace(x_min, x_max, resolution)
         self.y_range = np.linspace(y_min, y_max, resolution)
         self.X_grid, self.Y_grid = np.meshgrid(self.x_range, self.y_range)
@@ -230,9 +224,10 @@ class PlanetAnomalyMap(object):
 
         # show
         plt.tight_layout()
+        fig = plt.gcf()
         if show:
-            plt.show()
-        return plt.gcf()
+            fig.show()
+        return fig
 
     # PLOT OF PLANET ANOMALY MAP
     def plot_planet_anomaly_map(self, show=True):
@@ -243,9 +238,10 @@ class PlanetAnomalyMap(object):
                                 add_contour=True, add_grid=True, add_tE=True,
                                 add_trajectory=True, t0=self.t0, u0=self.u0, te=self.te, t=self.reldev_maps['t'])
         plt.title('Planet Anomaly Map')
+        fig = plt.gcf()
         if show:
-            plt.show()
-        return plt.gcf()
+            fig.show()
+        return fig
 
     # PLOT OF PLANET DETECTION ZONE
     def plot_planet_detection_zone_map(self, show=True):
@@ -256,9 +252,10 @@ class PlanetAnomalyMap(object):
                         add_contour=True, add_grid=True, add_tE=True,
                         add_trajectory=True, t0=self.t0, u0=self.u0, te=self.te, t=self.reldev_maps['t'])
         plt.title('Planet Detection Zone of Checked Datapoints')
+        fig = plt.gcf()
         if show:
-            plt.show()
-        return plt.gcf()
+            fig.show()
+        return fig
 
     ##########################
     # Sample Values from Map #
@@ -336,9 +333,10 @@ class PlanetAnomalyMap(object):
         plt.title('Planet Anomaly Map')
         plt.legend()
 
+        fig = plt.gcf()
         if show:
-            plt.show()
-        return plt.gcf()
+            fig.show()
+        return fig
 
 
 #########
@@ -347,7 +345,7 @@ class PlanetAnomalyMap(object):
 
 # generic heatmap plot
 def plot_heatmap(X, Y, Z, 
-                add_cbar=True, norm=colors.LogNorm(1e-5, 1e5), cbar_label='$\\sum\,\\chi^2$',
+                add_cbar=True, norm=colors.LogNorm(1e-5, 1e5), cbar_label=r'$\\sum\,\\chi^2$',
                 add_contour=True, add_grid=True, add_tE=True,
                 add_trajectory=False, t0=None, u0=None, te=None, t=None):
     """
@@ -388,7 +386,7 @@ def plot_heatmap(X, Y, Z,
                 zorder=1
                 )
         if t is not None:
-            bsx = (t - t0) / te
+            bsx = (np.asarray(t) - t0) / te
             bsy = u0
             plt.scatter(bsx, np.ones_like(bsx)*bsy, 
                         s=2, c='red', marker='x', label='Source Pos. at Obs.', 
