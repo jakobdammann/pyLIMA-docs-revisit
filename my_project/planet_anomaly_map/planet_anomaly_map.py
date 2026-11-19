@@ -1,11 +1,12 @@
-import reldev_grid
-
 from collections import OrderedDict
 import math
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as colors
+import matplotlib.tri as mtri
+
+import multiprocessing
 
 import lintsampler
 from scipy.interpolate import RegularGridInterpolator
@@ -70,8 +71,6 @@ class PlanetAnomalyMap(object):
         self.te = self.pspl_params['tE']
         self.tE = self.te
 
-        
-
     # PLOT
     def plot_pspl_model(self, show=True):
         # Plot
@@ -92,7 +91,9 @@ class PlanetAnomalyMap(object):
     # ANOMALY MAP COMPUTATION #
     ###########################
 
-    def _pspl_n_imagesf(self, t, u0, te, t0):
+    # PSPL calculation
+    @staticmethod
+    def _pspl_n_imagesf(t, u0, te, t0):
         """Calculates various parameters related to PSPL."""
         u_sqr = u0**2 + ((t - t0) / te)**2
         u_sqrt4 = (u_sqr + 4.)**0.5
@@ -115,14 +116,16 @@ class PlanetAnomalyMap(object):
         
         return pspl, u_plus, u_minus, prox, proy, mu_plus, mu_minus, spplus, spminus
 
-    def _reldev_map(self, q, t, u0, te, t0, fs, fb, ferr, rs, X, Y, s_min=0.01, tol=0.001):
+    # Calculates RelDev for a Map/Grid using VBB
+    @staticmethod
+    def _reldev_map(q, t, u0, te, t0, fs, fb, ferr, rs, X, Y, s_min=0.01, tol=0.001): 
         """
         Calculates deviation metrics based on current parameters and sky position (xp, yp).
 
         Adapted from Markus Hundertmark.
         """
         
-        out = self._pspl_n_imagesf(t, u0, te, t0)
+        out = PlanetAnomalyMap._pspl_n_imagesf(t, u0, te, t0)
         pspl, u_plus, u_minus, prox, proy, mu_plus, mu_minus, spplus, spminus = out
         
         # calculate binary/source positional terms
@@ -163,13 +166,17 @@ class PlanetAnomalyMap(object):
         # Calculate the final metric
         Z = np.zeros_like(X, dtype=float)
         Z[mask] = (fs * mag - fs * pspl)**2 / ferr**2
+
+        # I somehow have to transpose the map to be in the correct orientation
+        Z = Z.T
         
         return Z
 
+    # Creates the Planet Anomaly Map and Detection Zone Map
     def create_planet_anomaly_map(self, 
                                   meshgrid_corners=((-2.0,2.0),(-2.0,2.0)), resolution=100,
                                   q=0.001, rs=0.0005, dt=5,
-                                  verbose=False):
+                                  n_processes=None, verbose=False):
         # algorithm parameters
         t_range = (self.t0 - dt, self.t0 + dt) # distance interval around t0 to compute reldev [in JD]
 
@@ -188,6 +195,9 @@ class PlanetAnomalyMap(object):
         self.reldev_maps['name'] = []
         self.reldev_maps['weight'] = []
         self.reldev_maps['detection_zone'] = []
+
+        # Multithreading
+        jobs = []
 
         # per telescope
         for telescope in self.event.telescopes:
@@ -213,9 +223,9 @@ class PlanetAnomalyMap(object):
                     freal = datapoint['flux']
                     ferr = datapoint['err_flux']
 
-                # compute reldev values on meshgrid
-                Z = self._reldev_map(q, t, self.u0, self.te, self.t0, 
-                                     fs, fb, ferr, rs, self.X_grid, self.Y_grid)
+                # # compute reldev values on meshgrid
+                # Z = self._reldev_map(q, t, self.u0, self.te, self.t0, 
+                #                      fs, fb, ferr, rs, self.X_grid, self.Y_grid)
 
                 # compute weight by difference of pspl and real flux
                 pspl = self._pspl_n_imagesf(t, self.u0, self.te, self.t0)[0]
@@ -228,7 +238,14 @@ class PlanetAnomalyMap(object):
                 self.reldev_maps['t'].append(t)
                 self.reldev_maps['name'].append(name)
                 self.reldev_maps['weight'].append(weight)
-                self.reldev_maps['detection_zone'].append(Z)
+
+                # append arguments to multiprocessing jobs
+                jobs.append((q, t, self.u0, self.te, self.t0, 
+                            fs, fb, ferr, rs, self.X_grid, self.Y_grid))
+
+        # multiprocessing
+        with multiprocessing.Pool(n_processes) as pool:
+            self.reldev_maps['detection_zone'] = pool.starmap(PlanetAnomalyMap._reldev_map, jobs)
 
         # average the reldev maps
         self.detection_zone_map = np.average(self.reldev_maps['detection_zone'], axis=0)
@@ -251,6 +268,84 @@ class PlanetAnomalyMap(object):
     #########
     # PLOTS #
     #########
+
+    # generic heatmap plot
+    @staticmethod
+    def _plot_heatmap(X, Y, Z, 
+                    add_cbar=True, norm=colors.LogNorm(1e-5, 1e5), cbar_label=r'$\\sum\,\\chi^2$',
+                    add_contour=True, add_grid=True, add_tE=True,
+                    add_trajectory=False, t0=None, u0=None, te=None, t=None):
+        """
+        Function to generate a generic colored contour heatmap plot for 
+        planet anomaly maps or similar.
+        """
+
+        # create fig
+        plt.figure(figsize=(8, 7))
+
+        # heatmap
+        contour = plt.pcolormesh(X, Y, Z, 
+                                shading='auto', cmap=cm.turbo, norm=norm
+                                )
+        if add_contour:
+            plt.contour(X, Y, Z, levels=14, colors='k', linewidths=0.7, alpha=0.3, norm=norm)
+
+        # Einstein radius
+        if add_tE:
+            theta = np.linspace(0, 2 * np.pi, 100)
+            radius = 1
+            x = radius * np.cos(theta)
+            y = radius * np.sin(theta)
+            plt.plot(x, y, linestyle='--', lw=1, color='darkblue', label="Einstein Radius $\\theta_E$")
+
+        # grid
+        if add_grid:
+            plt.grid(True, linestyle='--', alpha=0.6)
+
+        # colorbar
+        if add_cbar:
+            plt.colorbar(contour, label=cbar_label)
+
+        # source trajectory
+        if add_trajectory:
+            plt.hlines(u0, xmin=np.min(X), xmax=np.max(X), 
+                    linestyle='-', lw=1, color='k', label="Source Trajectory", 
+                    zorder=1
+                    )
+            if t is not None:
+                bsx = (np.asarray(t) - t0) / te
+                bsy = u0
+                plt.scatter(bsx, np.ones_like(bsx)*bsy, 
+                            s=2, c='red', marker='x', label='Source Pos. at Obs.', 
+                            zorder=2)
+
+        # image trajectories
+        if add_trajectory:
+            t_arr = np.linspace(t0-te, t0+te, 100)
+            bsx = (t_arr - t0) / te
+            bsy = u0
+
+            u_sqr = u0**2 + ((t_arr - t0) / te)**2
+            u_sqrt4 = (u_sqr + 4.)**0.5
+            u = np.sqrt(u_sqr)
+            
+            u_plus = 0.5 * (u + u_sqrt4)
+            u_minus = 0.5 * (u - u_sqrt4)
+
+            plt.plot(bsx*u_plus/u, bsy*u_plus/u, linestyle=':', lw=1, color='darkblue', label="Image Trajectory")
+            plt.plot(bsx*u_minus/u, bsy*u_minus/u, linestyle=':', lw=1, color='darkblue')
+
+        # labels
+        plt.xlabel('X lens plane [$\\theta_{\\rm E}$]')
+        plt.ylabel('Y lens plane [$\\theta_{\\rm E}$]')
+        if plt.gca().get_legend_handles_labels()[1]:
+            plt.legend(loc='lower right')
+
+        # title
+        plt.title('Relative deviation caused by 2nd lens')
+        plt.gca().set_aspect('equal', adjustable='box')
+
+        return plt.gcf()
 
     # PLOT WITH ALL MAPS
     def plot_overview(self, show=True):
@@ -302,7 +397,7 @@ class PlanetAnomalyMap(object):
     # PLOT OF PLANET ANOMALY MAP
     def plot_planet_anomaly_map(self, show=True):
         # Heatmap Plot
-        plot_heatmap(self.X_grid, self.Y_grid, self.planet_anomaly_map, 
+        PlanetAnomalyMap._plot_heatmap(self.X_grid, self.Y_grid, self.planet_anomaly_map, 
                                 norm=colors.LogNorm(1e-5,1e6),
                                 add_cbar=True, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
                                 add_contour=True, add_grid=True, add_tE=True,
@@ -316,7 +411,7 @@ class PlanetAnomalyMap(object):
     # PLOT OF PLANET DETECTION ZONE
     def plot_planet_detection_zone_map(self, show=True):
         # Heatmap Plot
-        plot_heatmap(self.X_grid, self.Y_grid, self.detection_zone_map, 
+        PlanetAnomalyMap._plot_heatmap(self.X_grid, self.Y_grid, self.detection_zone_map, 
                         norm=colors.LogNorm(1e-5,1e6),
                         add_cbar=True, cbar_label='Relative Deviation $\\sum \\, \\chi_i^2$',
                         add_contour=True, add_grid=True, add_tE=True,
@@ -381,19 +476,36 @@ class PlanetAnomalyMap(object):
         # Create a Plot in s, alpha Space
         if s_alpha_plot:
             # plot
-            plot_heatmap(self.alpha_grid, self.s_grid, self.planet_anomaly_map, 
+            PlanetAnomalyMap._plot_heatmap(self.alpha_grid, self.s_grid, self.planet_anomaly_map, 
                             norm=colors.LogNorm(1e-5,1e6),
-                            add_cbar=True, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
-                            add_contour=True, add_grid=True, add_tE=False,
+                            add_cbar=False, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
+                            add_contour=False, add_grid=True, add_tE=False,
                             add_trajectory=False, t0=self.t0, u0=self.u0, te=self.te, t=self.reldev_maps['t'])
+            plt.gca().clear()
+            # using triangulation
+            x = self.X_grid.ravel()
+            y = self.Y_grid.ravel()
+            a = self.alpha_grid.ravel()
+            s = self.s_grid.ravel()
+            z = self.planet_anomaly_map.ravel()
+            mask = (z > 0) & (s > 0.01)
+            tri = mtri.Triangulation(a, s, triangles=mtri.Triangulation(x,y).triangles)
+            tri.set_mask(~mask[tri.triangles].all(axis=1) | (np.ptp(a[tri.triangles], axis=1) > np.pi))
+            tc = plt.tripcolor(tri, z, 
+                               cmap=cm.turbo, norm=colors.LogNorm(1e-5, 1e6), 
+                               shading='gouraud')
+            plt.colorbar(tc, label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$')
+            plt.tricontour(tri, z, levels=14, colors='k', linewidths=0.7, alpha=0.3, norm=colors.LogNorm(1e-5, 1e6))
+            # scatter samples
             plt.scatter(alpha_samples, s_samples, c='k', alpha=0.5, marker='x', label='Samples')
             plt.xlabel('Planet Angle $\\alpha$')
             plt.ylabel('Planet Separation $s$ [$\\theta_{\\rm E}$]')
+            plt.grid()
 
         # Create a Plot in x, y Space
         else:
             # plot
-            plot_heatmap(self.X_grid, self.Y_grid, self.planet_anomaly_map, 
+            PlanetAnomalyMap._plot_heatmap(self.X_grid, self.Y_grid, self.planet_anomaly_map, 
                                     norm=colors.LogNorm(1e-5,1e6),
                                     add_cbar=True, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
                                     add_contour=True, add_grid=True, add_tE=False,
@@ -407,89 +519,6 @@ class PlanetAnomalyMap(object):
         if show:
             fig.show()
         return fig
-
-
-#########
-# UTILS #
-#########
-
-# generic heatmap plot
-def plot_heatmap(X, Y, Z, 
-                add_cbar=True, norm=colors.LogNorm(1e-5, 1e5), cbar_label=r'$\\sum\,\\chi^2$',
-                add_contour=True, add_grid=True, add_tE=True,
-                add_trajectory=False, t0=None, u0=None, te=None, t=None):
-    """
-    Function to generate a generic colored contour heatmap plot for 
-    planet anomaly maps or similar.
-    """
-
-    # create fig
-    plt.figure(figsize=(8, 7))
-
-    # heatmap
-    contour = plt.pcolormesh(X, Y, Z, 
-                            shading='auto', cmap=cm.turbo, norm=norm
-                            )
-    if add_contour:
-        plt.contour(X, Y, Z, levels=14, colors='k', linewidths=0.7, alpha=0.3, norm=norm)
-
-    # Einstein radius
-    if add_tE:
-        theta = np.linspace(0, 2 * np.pi, 100)
-        radius = 1
-        x = radius * np.cos(theta)
-        y = radius * np.sin(theta)
-        plt.plot(x, y, linestyle='--', lw=1, color='darkblue', label="$\\theta_E$")
-
-    # grid
-    if add_grid:
-        plt.grid(True, linestyle='--', alpha=0.6)
-
-    # colorbar
-    if add_cbar:
-        plt.colorbar(contour, label=cbar_label)
-
-    # source trajectory
-    if add_trajectory:
-        plt.hlines(u0, xmin=np.min(X), xmax=np.max(X), 
-                linestyle='-', lw=1, color='k', label="Source Trajectory", 
-                zorder=1
-                )
-        if t is not None:
-            bsx = (np.asarray(t) - t0) / te
-            bsy = u0
-            plt.scatter(bsx, np.ones_like(bsx)*bsy, 
-                        s=2, c='red', marker='x', label='Source Pos. at Obs.', 
-                        zorder=2)
-
-    # image trajectories
-    if add_trajectory:
-        t_arr = np.linspace(t0-te, t0+te, 100)
-        bsx = (t_arr - t0) / te
-        bsy = u0
-
-        u_sqr = u0**2 + ((t_arr - t0) / te)**2
-        u_sqrt4 = (u_sqr + 4.)**0.5
-        u = np.sqrt(u_sqr)
-        
-        u_plus = 0.5 * (u + u_sqrt4)
-        u_minus = 0.5 * (u - u_sqrt4)
-
-        plt.plot(bsx*u_plus/u, bsy*u_plus/u, linestyle=':', lw=1, color='darkblue', label="Image Trajectory")
-        plt.plot(bsx*u_minus/u, bsy*u_minus/u, linestyle=':', lw=1, color='darkblue')
-
-    # labels
-    plt.xlabel('X lens plane [$\\theta_{\\rm E}$]')
-    plt.ylabel('Y lens plane [$\\theta_{\\rm E}$]')
-    if plt.gca().get_legend_handles_labels()[1]:
-        plt.legend(loc='lower right')
-
-    # title
-    plt.title('Relative deviation caused by 2nd lens')
-    plt.gca().set_aspect('equal', adjustable='box')
-
-    return plt.gcf()
-
 
 
 if __name__ == '__main__':
