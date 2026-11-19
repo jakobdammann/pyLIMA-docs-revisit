@@ -14,6 +14,11 @@ from pyLIMA.fits import TRF_fit
 from pyLIMA.models import PSPL_model, PSBL_model
 from pyLIMA.outputs import pyLIMA_plots
 
+import VBBinaryLensing
+VBB=VBBinaryLensing.VBBinaryLensing()
+VBB.Tol=float(0.001)
+VBB.satellite=int(0)
+
 ############################
 # PLANET ANOMALY MAP CLASS #
 ############################
@@ -87,6 +92,80 @@ class PlanetAnomalyMap(object):
     # ANOMALY MAP COMPUTATION #
     ###########################
 
+    def _pspl_n_imagesf(self, t, u0, te, t0):
+        """Calculates various parameters related to PSPL."""
+        u_sqr = u0**2 + ((t - t0) / te)**2
+        u_sqrt4 = (u_sqr + 4.)**0.5
+        u = np.sqrt(u_sqr)
+        
+        u_plus = 0.5 * (u + u_sqrt4)
+        u_minus = 0.5 * (u - u_sqrt4)
+        
+        # Handle potential division by zero if u_plus*2 - u_minus**2 is zero
+        denominator = (u_plus * 2 - u_minus**2)
+        mu_plus = u_plus**2 / denominator if denominator != 0 else np.inf
+        mu_minus = u_minus**2 / denominator if denominator != 0 else np.inf
+        
+        spplus = 2.0 * mu_plus - 1.0
+        spminus = 2.0 * mu_minus
+        
+        prox = (t - t0) / (te * u) if u != 0 else np.nan
+        proy = u0 / u if u != 0 else np.nan
+        pspl = (u_sqr + 2.0) / (u * u_sqrt4) if u != 0 and u_sqrt4 != 0 else np.nan
+        
+        return pspl, u_plus, u_minus, prox, proy, mu_plus, mu_minus, spplus, spminus
+
+    def _reldev_map(self, q, t, u0, te, t0, fs, fb, ferr, rs, X, Y, s_min=0.01, tol=0.001):
+        """
+        Calculates deviation metrics based on current parameters and sky position (xp, yp).
+
+        Adapted from Markus Hundertmark.
+        """
+        
+        out = self._pspl_n_imagesf(t, u0, te, t0)
+        pspl, u_plus, u_minus, prox, proy, mu_plus, mu_minus, spplus, spminus = out
+        
+        # calculate binary/source positional terms
+        bsx = (t - t0) / te
+        bsy = u0
+        invq1 = 1.0 / (q + 1.0)
+        
+        # Separation Calculation
+        s = np.sqrt(X**2 + Y**2)
+
+        # mask only for large s
+        mask = s > s_min
+        xp, yp, sm = X[mask], Y[mask], s[mask]
+
+        # compute vector between binary and planet
+        k = q / (1.0 + q)
+        nsx = bsx - k * xp
+        nsy = bsy - k * yp
+                        
+        # determine rotation angles
+        phi1 = np.arctan2(xp, yp)
+        phi2 = np.arctan2(nsx, nsy)
+        phi3 = np.arctan2(bsx, bsy)
+            
+        angle = phi2 - phi1 - phi3 + np.pi * 0.5
+
+        # apply rotation to bs directly (skip rotation matrix)
+        cos, sin = np.cos(angle), np.sin(angle)
+        bx = cos * bsx - sin * bsy
+        by = sin * bsx + cos * bsy
+        
+        # Use the required dependency functions
+        # result = VBB.BinaryMag(s, q, bsinmap[1], bsinmap[0], rs, 0.001)
+        mag = np.fromiter((VBB.BinaryMag(si, q, yi, xi, rs, tol) 
+                           for si, yi, xi in zip(sm, by, bx)),
+                           dtype=float, count=sm.size)
+        
+        # Calculate the final metric
+        Z = np.zeros_like(X, dtype=float)
+        Z[mask] = (fs * mag - fs * pspl)**2 / ferr**2
+        
+        return Z
+
     def create_planet_anomaly_map(self, 
                                   meshgrid_corners=((-2.0,2.0),(-2.0,2.0)), resolution=100,
                                   q=0.001, rs=0.0005, dt=5,
@@ -134,23 +213,14 @@ class PlanetAnomalyMap(object):
                     freal = datapoint['flux']
                     ferr = datapoint['err_flux']
 
-                # setup a vectorized function to compute reldev at each point
-                def vectorized_reldev_wrapper(X_arr, Y_arr):
-                    vectorized_func = np.vectorize(lambda x, y: reldev_grid.reldev(q, t, 
-                                                                                   self.u0, self.te, self.t0, 
-                                                                                   fs, fb, ferr, rs, x, y))
-                    return vectorized_func(X_arr, Y_arr)
-                # TODO: remove this vectorized function wrapper declaration for performance
-                
                 # compute reldev values on meshgrid
-                if verbose:
-                    print(f'Running Grid Analysis for {name} at t={t}.')
-                Z = vectorized_reldev_wrapper(self.X_grid, self.Y_grid)
+                Z = self._reldev_map(q, t, self.u0, self.te, self.t0, 
+                                     fs, fb, ferr, rs, self.X_grid, self.Y_grid)
 
                 # compute weight by difference of pspl and real flux
-                pspl = reldev_grid.pspl_n_imagesf(t, self.u0, self.te, self.t0)[0]
+                pspl = self._pspl_n_imagesf(t, self.u0, self.te, self.t0)[0]
                 fmodel = fs * pspl + fb
-                weight = (freal - fmodel)**2 / ferr**2 # use delta chisq 
+                weight = (freal - fmodel)**2 / ferr**2 # use delta chisq
                 if verbose:
                     print('real:', freal, ' model:', fmodel, ' weight:', weight)
 
@@ -419,3 +489,8 @@ def plot_heatmap(X, Y, Z,
     plt.gca().set_aspect('equal', adjustable='box')
 
     return plt.gcf()
+
+
+
+if __name__ == '__main__':
+    pass

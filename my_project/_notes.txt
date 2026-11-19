@@ -82,6 +82,21 @@ put code into functions
 multithreading?
 jit in jax
 
-9.9. 11:00 Meeting Zoom oder Slack
+
+## 9.9. 11:00 Meeting Zoom oder Slack ## 
 
 try my_fit.fit_outputs() for plots
+
+aic, bic
+accuracy vs precission
+sigma clipping
+
+
+## Meeting 02.11. ##
+nach dem Projekt / Masterarbeit
+
+MCMC Sampling Ressourcen, emce Fitter
+was mit Degeneracy
+
+Code Struktur arbeite ich selbständig dran
+

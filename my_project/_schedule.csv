@@ -29,4 +29,7 @@
 28,     21.10., 4,      best fit & comparison
 29,     27.10., 2,      refactoring into class
 29,     28.10., 3,      refactoring
-29,     29.10., 
+29,     29.10., 2,      I forgot
+30,     02.11., 1,      meeting
+32,     17.11., 1,      implemented reldev_map
+32,     19.11., 2,      performance improvement with reldev_map
