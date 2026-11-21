@@ -34,3 +34,4 @@
 32,     17.11., 1,      implemented reldev_map
 32,     19.11., 2,      performance improvement with reldev_map
 32,     19.11., 2,      multiprocessing & triangulation for s alpha plot
+32,     20.11., 2,      learning rejection sampling

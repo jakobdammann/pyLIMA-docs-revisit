@@ -223,10 +223,6 @@ class PlanetAnomalyMap(object):
                     freal = datapoint['flux']
                     ferr = datapoint['err_flux']
 
-                # # compute reldev values on meshgrid
-                # Z = self._reldev_map(q, t, self.u0, self.te, self.t0, 
-                #                      fs, fb, ferr, rs, self.X_grid, self.Y_grid)
-
                 # compute weight by difference of pspl and real flux
                 pspl = self._pspl_n_imagesf(t, self.u0, self.te, self.t0)[0]
                 fmodel = fs * pspl + fb
@@ -243,7 +239,7 @@ class PlanetAnomalyMap(object):
                 jobs.append((q, t, self.u0, self.te, self.t0, 
                             fs, fb, ferr, rs, self.X_grid, self.Y_grid))
 
-        # multiprocessing
+        # multiprocessing to compute reldev values on meshgrid
         with multiprocessing.Pool(n_processes) as pool:
             self.reldev_maps['detection_zone'] = pool.starmap(PlanetAnomalyMap._reldev_map, jobs)
 
