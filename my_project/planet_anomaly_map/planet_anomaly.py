@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as colors
 import matplotlib.tri as mtri
+import corner
 
 import multiprocessing
 
@@ -71,7 +72,6 @@ class PlanetAnomalyDetector(object):
         self.t0 = self.pspl_params['t0']
         self.u0 = self.pspl_params['u0']
         self.te = self.pspl_params['tE']
-        self.tE = self.te
 
     # PLOT
     def plot_pspl_model(self, show=True):
@@ -169,7 +169,7 @@ class PlanetAnomalyDetector(object):
         Z = np.zeros_like(X, dtype=float)
         Z[mask] = (fs * mag - fs * pspl)**2 / ferr**2
 
-        # I somehow have to transpose the map to be in the correct orientation
+        # TODO: I somehow have to transpose the map to be in the correct orientation
         Z = Z.T
         
         return Z
@@ -253,72 +253,241 @@ class PlanetAnomalyDetector(object):
         return self.planetAnomalyMap
 
 
-    ###################################################
-    # ANOMALY MAP COMPUTATION WITH REJECTION SAMPLING #
-    ###################################################
+    ######################
+    # REJECTION SAMPLING #
+    ######################
+
+    @staticmethod
+    def _get_map_weights(event, pspl_params, t_range, logging=False):
+        # get pspl params
+        u0 = pspl_params['u0']
+        te = pspl_params['tE']
+        t0 = pspl_params['t0']
+
+        # output array
+        weights = {}
+        weights['t'] = []
+        weights['name'] = []
+        weights['fs'] = []
+        weights['fb'] = []
+        weights['ferr'] = []
+        weights['value'] = []
+
+        ### Extract part of lightcurve from each telescope
+        for telescope in event.telescopes:
+
+            # telescope parameters from fit
+            name = telescope.name
+            fs = pspl_params['fsource_' + name]
+            fb = pspl_params['ftotal_' + name] - pspl_params['fsource_' + name]
+
+            # crop lightcurve to t_range
+            time = telescope.lightcurve['time'].value
+            lightcurve = telescope.lightcurve[(time > t_range[0]) & (time < t_range[1])]
+
+            ### Compute weight for each datapoint
+            for datapoint in lightcurve:
+
+                # get parameters of datapoint
+                t = datapoint['time'].value # in [JD]
+                try:
+                    freal = datapoint['flux'].value
+                    ferr = datapoint['err_flux'].value # in [W/m^2]
+                except:
+                    freal = datapoint['flux']
+                    ferr = datapoint['err_flux']
+
+                # compute weight by difference of pspl and real flux
+                pspl = PlanetAnomalyDetector._pspl_n_imagesf(t, u0, te, t0)[0]
+                fmodel = fs * pspl + fb
+                weight = (freal - fmodel)**2 / ferr**2 # delta chisq
+                if logging:
+                    print('Map weight computed.')
+                    print('real:', freal, ' model:', fmodel, ' weight:', weight)
+
+                # save
+                weights['t'].append(t)
+                weights['name'].append(name)
+                weights['fs'].append(fs)
+                weights['fb'].append(fb)
+                weights['ferr'].append(ferr)
+                weights['value'].append(weight)
+                
+
+        # returning
+        return weights
+
+    @staticmethod
+    def _prepare_points(weights, u0, te, t0):
+        """
+        Computes values for all datapoints that are later used for Rejection Sampling.
+        These are t, fs, fb, ferr, w (weight), im1x, im1y, im2x, im2y (image coordinates).
+        """
+        t = np.asarray(weights['t'])
+        bsx = (t - t0) / te
+        u = np.hypot(bsx, u0)
+        u_sqrt4 = np.sqrt(u**2 + 4.)
+        u_plus = 0.5 * (u + u_sqrt4)
+        u_minus = 0.5 * (u - u_sqrt4)
+        return {
+            't': t,
+            'fs': np.asarray(weights['fs']),
+            'fb': np.asarray(weights['fb']),
+            'ferr': np.asarray(weights['ferr']),
+            'w': np.asarray(weights['value']),
+            'im1x': bsx * u_plus / u,  'im1y': u0 * u_plus / u,     # major image
+            'im2x': bsx * u_minus / u, 'im2y': u0 * u_minus / u,    # minor image
+        }
+    
+    # Calculates RelDev for a single value using VBB
+    @staticmethod
+    def _reldev_value(q, t, u0, te, t0, fs, fb, ferr, rs, xp, yp, tol=0.001): 
+        """
+        Calculates deviation metrics based on current parameters and sky position (xp, yp).
+        Adapted from Markus Hundertmark.
+        """
+
+        # TODO: somehow having to transpose the map
+        xp, yp = (yp, xp)
+        
+        out = PlanetAnomalyDetector._pspl_n_imagesf(t, u0, te, t0)
+        pspl, u_plus, u_minus, prox, proy, mu_plus, mu_minus, spplus, spminus = out
+        
+        # calculate binary/source positional terms
+        bsx = (t - t0) / te
+        bsy = u0
+        invq1 = 1.0 / (q + 1.0)
+        
+        # Separation Calculation
+        s = np.sqrt(xp**2 + yp**2)
+
+        # compute vector between binary and planet
+        k = q / (1.0 + q)
+        nsx = bsx - k * xp
+        nsy = bsy - k * yp
+                        
+        # determine rotation angles
+        phi1 = np.arctan2(xp, yp)
+        phi2 = np.arctan2(nsx, nsy)
+        phi3 = np.arctan2(bsx, bsy)
+            
+        angle = phi2 - phi1 - phi3 + np.pi * 0.5
+
+        # apply rotation to bs directly (skip rotation matrix)
+        cos, sin = np.cos(angle), np.sin(angle)
+        bx = cos * bsx - sin * bsy
+        by = sin * bsx + cos * bsy
+        
+        # Compute the Magnification with VBB
+        mag = VBB.BinaryMag(s, q, by, bx, rs, tol)
+        
+        # Calculate the final metric
+        Z = (fs * mag - fs * pspl)**2 / ferr**2
+        
+        return Z
 
 
-    def create_planet_anomaly_map_with_rejection_sampling(self, 
-                                  xy_limits=((-2.0,2.0),(-2.0,2.0)),
-                                  logq_limits=(-5,-1),
-                                  M=10, n_samples=100, batch_size=10, 
+    # Creates the Planet Anomaly Map dependend on x,y,q while using Rejection Sampling
+    def create_map_with_rejection_sampling(self, 
+                                  xy_limits=((-2.0,2.0),(-2.0,2.0)), logq_limits=(-5,-1),
                                   rs=0.0005, delta_time=5,
-                                  n_processes=None, verbose=False):
+                                  n_samples=100000, M=None, 
+                                  batch_size=10, n_processes=None, 
+                                  seed=0, logging=False):
 
-        # algorithm parameters
-        t_range = (self.t0 - delta_time, self.t0 + delta_time) # distance interval around t0 to compute reldev [in JD]
-        x_limits = xy_limits[0]
-        y_limits = xy_limits[1]
-        low = (x_limits[0], y_limits[0], logq_limits[0])
-        high = (x_limits[1], y_limits[1], logq_limits[1])
+        ### Precompute weight and other values at each datapoint
+        t_range = (self.t0 - delta_time, self.t0 + delta_time) # [in JD]
+        weights = self._get_map_weights(self.event, self.pspl_params, t_range)
+        points = self._prepare_points(weights, self.u0, self.te, self.t0)
+        w_tot = np.sum(points['w'])
 
-        # random number generator
-        rng = np.random.default_rng(0)
-        out = []
+        # Setup
+        rng = np.random.default_rng(seed)
+        accepted_samples, n_draws, n_clipped = [], 0, 0
+
+        ### Choose fitting M
+        if M is None:
+            M = 8
 
         ### Rejection Sampling
-        while len(out) < n_samples:
+        while len(accepted_samples) < n_samples:
 
-            # random variables for rejection sampling
-            xylogq = rng.uniform(low, high, size=(batch_size, 3))
-            u = rng.uniform(0, M, size=batch_size)
+            ### Random variables for rejection sampling
+            x = rng.uniform(xy_limits[0][0], xy_limits[0][1])
+            y = rng.uniform(xy_limits[1][0], xy_limits[1][1])
+            logq = rng.uniform(logq_limits[0], logq_limits[1])
+            u = rng.uniform(0, M)
 
-            ### Extract part of lightcurve from each telescope
-            for telescope in self.event.telescopes:
-    
-                name = telescope.name
-                # telescope parameters from fit
-                fs = self.pspl_params['fsource_' + name]
-                fb = self.pspl_params['ftotal_' + name] - self.pspl_params['fsource_' + name]
-    
-                # crop lightcurve to t_range
-                time = telescope.lightcurve['time'].value
-                lightcurve = telescope.lightcurve[(time > t_range[0]) & (time < t_range[1])]
+            ### Sort datapoints by distance to one of the two images
+            dist = np.minimum(np.hypot(x - points['im1x'], y - points['im1y']),
+                              np.hypot(x - points['im2x'], y - points['im2y']))
+            order = np.argsort(dist)
 
-                ### Compute statistic for each datapoint
-                for datapoint in lightcurve:
-    
-                    # parameters from datapoint
-                    t = datapoint['time'].value # in [JD]
-                    try:
-                        freal = datapoint['flux'].value
-                        ferr = datapoint['err_flux'].value # in [W/m^2]
-                    except:
-                        freal = datapoint['flux']
-                        ferr = datapoint['err_flux']
-    
-                    # compute weight by difference of pspl and real flux
-                    pspl = self._pspl_n_imagesf(t, self.u0, self.te, self.t0)[0]
-                    fmodel = fs * pspl + fb
-                    weight = (freal - fmodel)**2 / ferr**2 # delta chisq
-                    if verbose:
-                        print('real:', freal, ' model:', fmodel, ' weight:', weight)
-                
-            out.extend(xylogq)
+            ### Compute statistic with truncation
+            summed, start, accepted = 0, 0, False
+            stages = [1,3,5]
 
-        # crop out in case last batch
-        out = out[:n_samples]
-        print(out)
+            # stage determines when to stop
+            for stop in stages:
+                for i in order[start:stop]:
+
+                    # calculate reldev value
+                    reldev = self._reldev_value(10**logq, points['t'][i], 
+                                                self.u0, self.te, self.t0, 
+                                                points['fs'][i], points['fb'][i], 
+                                                points['ferr'][i], rs, x, y)
+                    
+                    # weighted sum
+                    summed += reldev * points['w'][i]
+                # set old stop to new start
+                start = stop
+            
+                # calculate statistic
+                statistic = np.log10(summed / w_tot)
+
+                ### Check if sample can already be accepted
+                if statistic > u:
+                    accepted = True
+                    break
+
+            # append values if accepted
+            if accepted:
+                accepted_samples.append([x, y, logq])
+            
+                # print info on progress
+                if logging and len(accepted_samples)%1000 == 0:
+                    print(f'''Accepted Samples: {len(accepted_samples)} / {n_samples}, 
+                    Efficiency: {len(accepted_samples)/n_draws:.3f}''')
+
+            # add one to the draw count
+            n_draws += 1
+
+        accepted_samples = np.array(accepted_samples)
+        efficiency = len(accepted_samples) / n_draws
+        print('Efficiency:', efficiency)
+
+        # plot
+        data = np.column_stack([accepted_samples[:, 0], 
+                                accepted_samples[:, 1], 
+                                accepted_samples[:, 2]])
+
+        fig = corner.corner(
+            data,
+            labels=[r"$x\ [\theta_E]$", r"$y\ [\theta_E]$", r"$\log_{10} q$"],
+            range=[(-2, 2), (-2, 2), (-5, -1)],
+            bins=40,
+            plot_datapoints=False,
+            plot_density=True,
+            fill_contours=True,
+        )
+
+        fig.savefig("my_project/graphics/corner_xylogq.png", dpi=150)
+
+        from matplotlib.colors import LogNorm
+        plt.figure()
+        plt.hist2d(accepted_samples[:, 0], accepted_samples[:, 1], bins=40, norm=LogNorm(clip=True), cmap="turbo")
+        plt.colorbar(label="counts")
+        fig.savefig("my_project/graphics/corner_xylogq1.png", dpi=150)
 
 
     #########
@@ -613,6 +782,10 @@ class PlanetAnomalyMap(object):
     def __init__(self, mode=None):
         self.mode = mode
 
+    ############
+    # CREATION #
+    ############
+
     def create_with_reldev_maps(self, reldev_maps, X_grid, Y_grid):
         self.mode = 'grid'
 
@@ -625,7 +798,7 @@ class PlanetAnomalyMap(object):
                                             weights=self.reldev_maps['weight'])
 
     def create_with_distribution(self, dist):
-        mode = 'dist'
+        self.mode = 'dist'
 
     ###############
     # RETURN DATA #
@@ -701,4 +874,4 @@ if __name__ == '__main__':
 
     ##################################################
     ### Create Anomaly Map
-    anomaly_map = anomaly_detector.create_planet_anomaly_map_with_rejection_sampling()
+    anomaly_map = anomaly_detector.create_map_with_rejection_sampling(logging=True)

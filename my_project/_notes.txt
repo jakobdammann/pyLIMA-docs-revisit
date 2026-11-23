@@ -103,4 +103,7 @@ Code Struktur arbeite ich selbständig dran
 
 ## Meeting 23.11.
 
-Multiprocessing: 
+Rejection Sampling in log space
+durch log teilen (?)
+log u <= log f(x) - log(c*g(x))
+c = M , g vorschlags density / prior
