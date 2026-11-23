@@ -100,3 +100,7 @@ was mit Degeneracy
 
 Code Struktur arbeite ich selbständig dran
 
+
+## Meeting 23.11.
+
+Multiprocessing: 

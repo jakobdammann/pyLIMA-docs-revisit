@@ -24,7 +24,7 @@ VBB.satellite=int(0)
 # PLANET ANOMALY MAP CLASS #
 ############################
 
-class PlanetAnomalyMap(object):
+class PlanetAnomalyDetector(object):
     """
     This class inhabits all the functionality for creating and sampling a 
     planet anomaly map.
@@ -39,6 +39,8 @@ class PlanetAnomalyMap(object):
     def __init__(self, event, window_limits=None):
         self.event = event
         self.window_limits = window_limits
+
+        self.planetAnomalyMap = None
 
     #########
     # UTILS #
@@ -87,9 +89,9 @@ class PlanetAnomalyMap(object):
             fig.show()
         return fig
 
-    ###########################
-    # ANOMALY MAP COMPUTATION #
-    ###########################
+    ###################################
+    # ANOMALY MAP COMPUTATION IN GRID #
+    ###################################
 
     # PSPL calculation
     @staticmethod
@@ -125,7 +127,7 @@ class PlanetAnomalyMap(object):
         Adapted from Markus Hundertmark.
         """
         
-        out = PlanetAnomalyMap._pspl_n_imagesf(t, u0, te, t0)
+        out = PlanetAnomalyDetector._pspl_n_imagesf(t, u0, te, t0)
         pspl, u_plus, u_minus, prox, proy, mu_plus, mu_minus, spplus, spminus = out
         
         # calculate binary/source positional terms
@@ -175,10 +177,10 @@ class PlanetAnomalyMap(object):
     # Creates the Planet Anomaly Map and Detection Zone Map
     def create_planet_anomaly_map(self, 
                                   meshgrid_corners=((-2.0,2.0),(-2.0,2.0)), resolution=100,
-                                  q=0.001, rs=0.0005, dt=5,
+                                  q=0.001, rs=0.0005, delta_time=5,
                                   n_processes=None, verbose=False):
         # algorithm parameters
-        t_range = (self.t0 - dt, self.t0 + dt) # distance interval around t0 to compute reldev [in JD]
+        t_range = (self.t0 - delta_time, self.t0 + delta_time) # distance interval around t0 to compute reldev [in JD]
 
         # Setup Meshgrid
         x_min = meshgrid_corners[0][0]
@@ -241,25 +243,83 @@ class PlanetAnomalyMap(object):
 
         # multiprocessing to compute reldev values on meshgrid
         with multiprocessing.Pool(n_processes) as pool:
-            self.reldev_maps['detection_zone'] = pool.starmap(PlanetAnomalyMap._reldev_map, jobs)
+            self.reldev_maps['detection_zone'] = pool.starmap(PlanetAnomalyDetector._reldev_map, jobs)
 
         # average the reldev maps
-        self.detection_zone_map = np.average(self.reldev_maps['detection_zone'], axis=0)
-        self.planet_anomaly_map = np.average(self.reldev_maps['detection_zone'], axis=0, 
-                                             weights=self.reldev_maps['weight'])
+        self.planetAnomalyMap = PlanetAnomalyMap()
+        self.planetAnomalyMap.create_with_reldev_maps(self.reldev_maps, self.X_grid, self.Y_grid)
 
         print('Planet Anomaly Map done.')
-        return self.planet_anomaly_map
+        return self.planetAnomalyMap
 
-    ###############
-    # RETURN DATA #
-    ###############
 
-    def get_planet_anomaly_map(self):
-        return (self.X_grid, self.Y_grid), self.planet_anomaly_map, 
+    ###################################################
+    # ANOMALY MAP COMPUTATION WITH REJECTION SAMPLING #
+    ###################################################
 
-    def get_planet_detection_zone_map(self):
-        return (self.X_grid, self.Y_grid), self.detection_zone_map
+
+    def create_planet_anomaly_map_with_rejection_sampling(self, 
+                                  xy_limits=((-2.0,2.0),(-2.0,2.0)),
+                                  logq_limits=(-5,-1),
+                                  M=10, n_samples=100, batch_size=10, 
+                                  rs=0.0005, delta_time=5,
+                                  n_processes=None, verbose=False):
+
+        # algorithm parameters
+        t_range = (self.t0 - delta_time, self.t0 + delta_time) # distance interval around t0 to compute reldev [in JD]
+        x_limits = xy_limits[0]
+        y_limits = xy_limits[1]
+        low = (x_limits[0], y_limits[0], logq_limits[0])
+        high = (x_limits[1], y_limits[1], logq_limits[1])
+
+        # random number generator
+        rng = np.random.default_rng(0)
+        out = []
+
+        ### Rejection Sampling
+        while len(out) < n_samples:
+
+            # random variables for rejection sampling
+            xylogq = rng.uniform(low, high, size=(batch_size, 3))
+            u = rng.uniform(0, M, size=batch_size)
+
+            ### Extract part of lightcurve from each telescope
+            for telescope in self.event.telescopes:
+    
+                name = telescope.name
+                # telescope parameters from fit
+                fs = self.pspl_params['fsource_' + name]
+                fb = self.pspl_params['ftotal_' + name] - self.pspl_params['fsource_' + name]
+    
+                # crop lightcurve to t_range
+                time = telescope.lightcurve['time'].value
+                lightcurve = telescope.lightcurve[(time > t_range[0]) & (time < t_range[1])]
+
+                ### Compute statistic for each datapoint
+                for datapoint in lightcurve:
+    
+                    # parameters from datapoint
+                    t = datapoint['time'].value # in [JD]
+                    try:
+                        freal = datapoint['flux'].value
+                        ferr = datapoint['err_flux'].value # in [W/m^2]
+                    except:
+                        freal = datapoint['flux']
+                        ferr = datapoint['err_flux']
+    
+                    # compute weight by difference of pspl and real flux
+                    pspl = self._pspl_n_imagesf(t, self.u0, self.te, self.t0)[0]
+                    fmodel = fs * pspl + fb
+                    weight = (freal - fmodel)**2 / ferr**2 # delta chisq
+                    if verbose:
+                        print('real:', freal, ' model:', fmodel, ' weight:', weight)
+                
+            out.extend(xylogq)
+
+        # crop out in case last batch
+        out = out[:n_samples]
+        print(out)
+
 
     #########
     # PLOTS #
@@ -348,7 +408,12 @@ class PlanetAnomalyMap(object):
         '''
         Create a figure of all maps, one per datapoint.
         '''
-        n_maps = len(self.reldev_maps['detection_zone']) 
+        # get RelDev Maps from Planet Anomaly Map
+        reldev_maps = self.planetAnomalyMap.reldev_maps
+        X_grid = self.planetAnomalyMap.X_grid
+        Y_grid = self.planetAnomalyMap.Y_grid
+
+        n_maps = len(reldev_maps['detection_zone']) 
         nx_maps = 4
         ny_maps = math.ceil(n_maps/nx_maps)
         # print(n_maps, nx_maps, ny_maps)
@@ -358,10 +423,10 @@ class PlanetAnomalyMap(object):
 
         for i in range(n_maps):
             # unpack
-            name = self.reldev_maps['name'][i]
-            t = self.reldev_maps['t'][i]
-            map = self.reldev_maps['detection_zone'][i]
-            weight = self.reldev_maps['weight'][i]
+            name = reldev_maps['name'][i]
+            t = reldev_maps['t'][i]
+            map = reldev_maps['detection_zone'][i]
+            weight = reldev_maps['weight'][i]
 
             # create subplot
             plt.subplot(ny_maps, nx_maps, i+1)
@@ -369,10 +434,10 @@ class PlanetAnomalyMap(object):
 
             # heatmap
             norm = colors.LogNorm(1e-5, 1e8)
-            plt.pcolormesh(self.X_grid, self.Y_grid, map*weight, shading='auto', cmap=cm.turbo, norm=norm)
+            plt.pcolormesh(X_grid, Y_grid, map*weight, shading='auto', cmap=cm.turbo, norm=norm)
 
             # trajectory
-            plt.hlines(self.u0, xmin=np.min(self.X_grid), xmax=np.max(self.X_grid), 
+            plt.hlines(self.u0, xmin=np.min(X_grid), xmax=np.max(X_grid), 
                 linestyle='-', lw=1, color='k', label="Source Trajectory")
             plt.scatter((t - self.t0) / self.te, self.u0, 
                         s=6, c='red', marker='x', label='Source Pos. at Obs.', zorder=2)
@@ -392,8 +457,11 @@ class PlanetAnomalyMap(object):
 
     # PLOT OF PLANET ANOMALY MAP
     def plot_planet_anomaly_map(self, show=True):
+        # get Planet Anomaly Map as a grid
+        (X_grid, Y_grid), Z_grid = self.planetAnomalyMap.get_planet_anomaly_map_grid()
+
         # Heatmap Plot
-        PlanetAnomalyMap._plot_heatmap(self.X_grid, self.Y_grid, self.planet_anomaly_map, 
+        PlanetAnomalyDetector._plot_heatmap(X_grid, Y_grid, Z_grid, 
                                 norm=colors.LogNorm(1e-5,1e6),
                                 add_cbar=True, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
                                 add_contour=True, add_grid=True, add_tE=True,
@@ -406,8 +474,11 @@ class PlanetAnomalyMap(object):
 
     # PLOT OF PLANET DETECTION ZONE
     def plot_planet_detection_zone_map(self, show=True):
+        # get Planet Anomaly Map as a grid
+        (X_grid, Y_grid), Z_grid = self.planetAnomalyMap.get_planet_detection_zone_map_grid()
+
         # Heatmap Plot
-        PlanetAnomalyMap._plot_heatmap(self.X_grid, self.Y_grid, self.detection_zone_map, 
+        PlanetAnomalyDetector._plot_heatmap(X_grid, Y_grid, Z_grid, 
                         norm=colors.LogNorm(1e-5,1e6),
                         add_cbar=True, cbar_label='Relative Deviation $\\sum \\, \\chi_i^2$',
                         add_contour=True, add_grid=True, add_tE=True,
@@ -426,17 +497,26 @@ class PlanetAnomalyMap(object):
         ''' 
         Use Planet Anomaly Map as a Distribution for Initial Values
         '''
-        # choose what to use as a distribution/statistic
-        self.anomaly_statistic = self.planet_anomaly_map / np.sum(self.planet_anomaly_map)
+        # check mode
+        mode = self.planetAnomalyMap.mode
 
-        # create vectorized function with Grid Interpolator
-        matrix_interp = RegularGridInterpolator((self.x_range, self.y_range), self.anomaly_statistic.T)
+        if mode == 'grid':
+            (X_grid, Y_grid), Z_grid = self.planetAnomalyMap.get_planet_anomaly_map_grid()
 
-        # create sampler and sample points
-        sampler = lintsampler.LintSampler((self.x_range, self.y_range), matrix_interp, vectorizedpdf=True)
-        self.samples = sampler.sample(n_samples)
+            # choose what to use as a distribution/statistic
+            self.anomaly_statistic = Z_grid / np.sum(Z_grid)
 
-        return self.samples
+            # create vectorized function with Grid Interpolator
+            matrix_interp = RegularGridInterpolator((self.x_range, self.y_range), self.anomaly_statistic.T)
+
+            # create sampler and sample points
+            sampler = lintsampler.LintSampler((self.x_range, self.y_range), matrix_interp, vectorizedpdf=True)
+            self.samples = sampler.sample(n_samples)
+
+            return self.samples
+
+        if mode == 'dist':
+            pass
 
     def convert_x_y_to_s_alpha_samples(self):
         # unpack sample coordinates
@@ -458,6 +538,8 @@ class PlanetAnomalyMap(object):
         return self.s_alpha_samples
 
     def create_sample_overview_plot(self, show=True, s_alpha_plot=False):
+        # unpack planet anomaly map object
+        (X_grid, Y_grid), Z_grid = self.planetAnomalyMap.get_planet_anomaly_map_grid()
         # unpack sample coordinates
         x_samples = self.samples[:,0]
         y_samples = self.samples[:,1]
@@ -472,18 +554,18 @@ class PlanetAnomalyMap(object):
         # Create a Plot in s, alpha Space
         if s_alpha_plot:
             # plot
-            PlanetAnomalyMap._plot_heatmap(self.alpha_grid, self.s_grid, self.planet_anomaly_map, 
+            PlanetAnomalyDetector._plot_heatmap(self.alpha_grid, self.s_grid, Z_grid, 
                             norm=colors.LogNorm(1e-5,1e6),
                             add_cbar=False, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
                             add_contour=False, add_grid=True, add_tE=False,
                             add_trajectory=False, t0=self.t0, u0=self.u0, te=self.te, t=self.reldev_maps['t'])
             plt.gca().clear()
             # using triangulation
-            x = self.X_grid.ravel()
-            y = self.Y_grid.ravel()
+            x = X_grid.ravel()
+            y = Y_grid.ravel()
             a = self.alpha_grid.ravel()
             s = self.s_grid.ravel()
-            z = self.planet_anomaly_map.ravel()
+            z = Z_grid.ravel()
             mask = (z > 0) & (s > 0.01)
             tri = mtri.Triangulation(a, s, triangles=mtri.Triangulation(x,y).triangles)
             tri.set_mask(~mask[tri.triangles].all(axis=1) | (np.ptp(a[tri.triangles], axis=1) > np.pi))
@@ -501,7 +583,7 @@ class PlanetAnomalyMap(object):
         # Create a Plot in x, y Space
         else:
             # plot
-            PlanetAnomalyMap._plot_heatmap(self.X_grid, self.Y_grid, self.planet_anomaly_map, 
+            PlanetAnomalyDetector._plot_heatmap(X_grid, Y_grid, Z_grid, 
                                     norm=colors.LogNorm(1e-5,1e6),
                                     add_cbar=True, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
                                     add_contour=True, add_grid=True, add_tE=False,
@@ -517,5 +599,106 @@ class PlanetAnomalyMap(object):
         return fig
 
 
+
+class PlanetAnomalyMap(object):
+    """
+    This class inhabits the functions for storing a planet anomaly map 
+    as a grid or as a distribution.
+
+    Attributes
+    ----------
+
+    """
+
+    def __init__(self, mode=None):
+        self.mode = mode
+
+    def create_with_reldev_maps(self, reldev_maps, X_grid, Y_grid):
+        self.mode = 'grid'
+
+        self.reldev_maps = reldev_maps
+        self.X_grid = X_grid
+        self.Y_grid = Y_grid
+
+        self.detection_zone_map = np.average(self.reldev_maps['detection_zone'], axis=0)
+        self.planet_anomaly_map = np.average(self.reldev_maps['detection_zone'], axis=0, 
+                                            weights=self.reldev_maps['weight'])
+
+    def create_with_distribution(self, dist):
+        mode = 'dist'
+
+    ###############
+    # RETURN DATA #
+    ###############
+
+    def get_planet_anomaly_map_grid(self):
+        if self.mode == 'grid':
+            return (self.X_grid, self.Y_grid), self.planet_anomaly_map
+
+        if self.mode == 'dist':
+            # bin distribution into grid
+            pass
+
+    def get_planet_detection_zone_map_grid(self):
+        if self.mode == 'grid':
+            return (self.X_grid, self.Y_grid), self.detection_zone_map
+
+        if self.mode == 'dist':
+            # bin distribution into grid
+            pass
+
+        
+
 if __name__ == '__main__':
-    pass
+    from pyLIMA import event
+    from pyLIMA.simulations import simulator
+    from pyLIMA.fits import TRF_fit
+    from pyLIMA.models import PSBL_model
+    from pyLIMA.outputs import pyLIMA_plots
+
+    ######################################################
+    #### Create simulated Microlensing event
+    event_3 = event.Event(ra=270, dec=0)
+    event_3.name = 'My simulated event'
+
+    CTIO_I = simulator.simulate_a_telescope(name='CTIO_I', time_start=2457190, time_end=2457220, sampling=6, 
+                                            location='Earth', camera_filter='I',
+                                            uniform_sampling=True, astrometry=False)
+    # LCO_SAAO = simulator.simulate_a_telescope(name='LCO_SAAO', time_start=2457205, time_end=2457208, sampling=1, 
+    #                                         location='Earth', camera_filter='I',
+    #                                         uniform_sampling=True, astrometry=False)
+
+    event_3.telescopes.append(CTIO_I)
+    # event_3.telescopes.append(LCO_SAAO)
+    event_3.check_event()
+
+    psbl_sim = PSBL_model.PSBLmodel(event_3)
+    psbl_sim_params = simulator.simulate_microlensing_model_parameters(psbl_sim)
+
+    ### Set the parameters to some reasonable values.
+    psbl_sim_params[0] = 2457205.21 # t0
+    psbl_sim_params[1:3] = [0.309, 10.7821] # u0, tE
+    psbl_sim_params[3:6] = [1.3, 0.001, 1.9] # s, q, alpha
+
+    ### Set the source and blend fluxes of all telescopes to the same values for plotting purposes.
+    n_tel = len(event_3.telescopes)
+    psbl_sim_params[-n_tel*2::2] = 10000. * np.ones(n_tel) # source fluxes
+    psbl_sim_params[-n_tel*2+1::2] = 12000. * np.ones(n_tel) # total fluxes
+    print(psbl_sim_params)
+
+    ### Transform the parameters into a pyLIMA class object.
+    pyLIMA_parameters_1 = psbl_sim.compute_pyLIMA_parameters(psbl_sim_params)
+
+    ### Inject everthing into the simulator to produce a light curve.
+    simulator.simulate_lightcurve(psbl_sim, pyLIMA_parameters_1)
+
+    ######################################################
+    ### Use Detector to run a PSPL fit
+    anomaly_detector = PlanetAnomalyDetector(event=event_3, 
+                                window_limits=((2457200.0, 2457210.5),(16.8, 15.9)))
+
+    anomaly_detector.run_pspl_fit()
+
+    ##################################################
+    ### Create Anomaly Map
+    anomaly_map = anomaly_detector.create_planet_anomaly_map_with_rejection_sampling()
