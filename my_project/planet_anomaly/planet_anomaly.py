@@ -41,7 +41,7 @@ class PlanetAnomalyDetector(object):
         self.event = event
         self.window_limits = window_limits
 
-        self.planetAnomalyMap = None
+        self.planet_anomaly_map = None
 
     #########
     # UTILS #
@@ -175,28 +175,27 @@ class PlanetAnomalyDetector(object):
         return Z
 
     # Creates the Planet Anomaly Map and Detection Zone Map
-    def create_planet_anomaly_map(self, 
-                                  meshgrid_corners=((-2.0,2.0),(-2.0,2.0)), resolution=100,
-                                  q=0.001, rs=0.0005, delta_time=5,
-                                  n_processes=None, verbose=False):
+    def create_map_on_grid(self, meshgrid_limits=((-2.0,2.0),(-2.0,2.0)), 
+                           resolution=100, q=0.001, rs=0.0005, delta_time=5,
+                           n_processes=None, verbose=False):
         # algorithm parameters
         t_range = (self.t0 - delta_time, self.t0 + delta_time) # distance interval around t0 to compute reldev [in JD]
 
         # Setup Meshgrid
-        x_min = meshgrid_corners[0][0]
-        x_max = meshgrid_corners[0][1]
-        y_min = meshgrid_corners[1][0]
-        y_max = meshgrid_corners[1][1]
-        self.x_range = np.linspace(x_min, x_max, resolution)
-        self.y_range = np.linspace(y_min, y_max, resolution)
-        self.X_grid, self.Y_grid = np.meshgrid(self.x_range, self.y_range)
+        x_min = meshgrid_limits[0][0]
+        x_max = meshgrid_limits[0][1]
+        y_min = meshgrid_limits[1][0]
+        y_max = meshgrid_limits[1][1]
+        x_range = np.linspace(x_min, x_max, resolution)
+        y_range = np.linspace(y_min, y_max, resolution)
+        X_grid, Y_grid = np.meshgrid(x_range, y_range)
 
         # Setup dict for saving values while running
-        self.reldev_maps = {}
-        self.reldev_maps['t'] = []
-        self.reldev_maps['name'] = []
-        self.reldev_maps['weight'] = []
-        self.reldev_maps['detection_zone'] = []
+        reldev_maps = {}
+        reldev_maps['t'] = []
+        reldev_maps['name'] = []
+        reldev_maps['weight'] = []
+        reldev_maps['detection_zone'] = []
 
         # Multithreading
         jobs = []
@@ -233,24 +232,24 @@ class PlanetAnomalyDetector(object):
                     print('real:', freal, ' model:', fmodel, ' weight:', weight)
 
                 # save
-                self.reldev_maps['t'].append(t)
-                self.reldev_maps['name'].append(name)
-                self.reldev_maps['weight'].append(weight)
+                reldev_maps['t'].append(t)
+                reldev_maps['name'].append(name)
+                reldev_maps['weight'].append(weight)
 
                 # append arguments to multiprocessing jobs
                 jobs.append((q, t, self.u0, self.te, self.t0, 
-                            fs, fb, ferr, rs, self.X_grid, self.Y_grid))
+                            fs, fb, ferr, rs, X_grid, Y_grid))
 
         # multiprocessing to compute reldev values on meshgrid
         with multiprocessing.Pool(n_processes) as pool:
-            self.reldev_maps['detection_zone'] = pool.starmap(PlanetAnomalyDetector._reldev_map, jobs)
+            reldev_maps['detection_zone'] = pool.starmap(PlanetAnomalyDetector._reldev_map, jobs)
 
         # average the reldev maps
-        self.planetAnomalyMap = PlanetAnomalyMap()
-        self.planetAnomalyMap.create_with_reldev_maps(self.reldev_maps, self.X_grid, self.Y_grid)
+        self.planet_anomaly_map = PlanetAnomalyMap()
+        self.planet_anomaly_map.create_with_reldev_maps(reldev_maps, X_grid, Y_grid)
 
         print('Planet Anomaly Map done.')
-        return self.planetAnomalyMap
+        return self.planet_anomaly_map
 
 
     ######################
@@ -490,6 +489,89 @@ class PlanetAnomalyDetector(object):
         fig.savefig("my_project/graphics/corner_xylogq1.png", dpi=150)
 
 
+
+class PlanetAnomalyMap(object):
+    """
+    This class inhabits the functions for storing a planet anomaly map 
+    as a grid or as a distribution.
+
+    Attributes
+    ----------
+
+    mode : str, 'grid' or 'dist' 
+    """
+
+    def __init__(self):
+        self.mode = None
+
+    ############
+    # CREATION #
+    ############
+
+    def create_with_reldev_maps(self, reldev_maps, X_grid, Y_grid):
+        self.mode = 'grid'
+
+        self.reldev_maps = reldev_maps
+        self.X_grid = X_grid
+        self.Y_grid = Y_grid
+
+        self.detection_zone_map = np.average(self.reldev_maps['detection_zone'], axis=0)
+        self.planet_anomaly_map = np.average(self.reldev_maps['detection_zone'], axis=0, 
+                                            weights=self.reldev_maps['weight'])
+
+    def create_with_distribution(self, dist):
+        self.mode = 'dist'
+
+    ###############
+    # RETURN DATA #
+    ###############
+
+    def get_map_on_grid(self):
+        if self.mode == 'grid':
+            return (self.X_grid, self.Y_grid), self.planet_anomaly_map
+
+        if self.mode == 'dist':
+            # bin distribution into grid
+            pass
+
+    def get_planet_detection_zone_on_grid(self):
+        if self.mode == 'grid':
+            return (self.X_grid, self.Y_grid), self.detection_zone_map
+
+        if self.mode == 'dist':
+            # bin distribution into grid
+            pass
+
+
+class PlanetAnomalyPlot(object):
+    """
+    This class inhabits the functions for plotting a Planet Anomaly Map.
+    Optionally, a Planet Anomaly Detector can be added as an argument, to add more informations to the plot.
+
+    Attributes
+    ----------
+    
+    planet_anomaly_map : PlanetAnomalyMap, contains the map for plotting
+    planet_anomaly_detector : PlanetAnomalyDetector, optional, contains information to add to plots
+    """
+
+    def __init__(self, planet_anomaly_map, planet_anomaly_detector = None):
+        self.planet_anomaly_map = planet_anomaly_map
+        self.planet_anomaly_detector = planet_anomaly_detector
+
+        # if Detector exists add additional information to plots
+        self.add_info =  False
+        if self.planet_anomaly_detector is not None:
+            self.add_info = True
+            self.t0 = self.planet_anomaly_detector.t0
+            self.te = self.planet_anomaly_detector.te
+            self.u0 = self.planet_anomaly_detector.u0
+
+        # if they exist, add points add t position on trajectory
+        self.t = None
+        if self.planet_anomaly_map.mode is 'grid' and self.add_info:
+            self.t = self.planet_anomaly_map.reldev_maps['t']
+
     #########
     # PLOTS #
     #########
@@ -577,10 +659,15 @@ class PlanetAnomalyDetector(object):
         '''
         Create a figure of all maps, one per datapoint.
         '''
+        # check if Map is in right mode
+        if self.planet_anomaly_map.mode is not 'grid':
+            print('Cannot perform overview plot on any other map mode than \'grid\'')
+            return
+
         # get RelDev Maps from Planet Anomaly Map
-        reldev_maps = self.planetAnomalyMap.reldev_maps
-        X_grid = self.planetAnomalyMap.X_grid
-        Y_grid = self.planetAnomalyMap.Y_grid
+        reldev_maps = self.planet_anomaly_map.reldev_maps
+        X_grid = self.planet_anomaly_map.X_grid
+        Y_grid = self.planet_anomaly_map.Y_grid
 
         n_maps = len(reldev_maps['detection_zone']) 
         nx_maps = 4
@@ -599,17 +686,20 @@ class PlanetAnomalyDetector(object):
 
             # create subplot
             plt.subplot(ny_maps, nx_maps, i+1)
-            plt.title(f'{name}, $t = t0 + {t - self.t0:.1f}$, $w = {weight:.1f}$')
+            plt.title('')
+            if self.add_info:
+                plt.title(f'{name}, $t = t0 + {t - self.t0:.1f}$, $w = {weight:.1f}$')
 
             # heatmap
             norm = colors.LogNorm(1e-5, 1e8)
             plt.pcolormesh(X_grid, Y_grid, map*weight, shading='auto', cmap=cm.turbo, norm=norm)
 
             # trajectory
-            plt.hlines(self.u0, xmin=np.min(X_grid), xmax=np.max(X_grid), 
-                linestyle='-', lw=1, color='k', label="Source Trajectory")
-            plt.scatter((t - self.t0) / self.te, self.u0, 
-                        s=6, c='red', marker='x', label='Source Pos. at Obs.', zorder=2)
+            if self.add_info:
+                plt.hlines(self.u0, xmin=np.min(X_grid), xmax=np.max(X_grid), 
+                    linestyle='-', lw=1, color='k', label="Source Trajectory")
+                plt.scatter((t - self.t0) / self.te, self.u0, 
+                            s=6, c='red', marker='x', label='Source Pos. at Obs.', zorder=2)
             
             # Einstein ring
             theta = np.linspace(0, 2 * np.pi, 100)
@@ -625,16 +715,16 @@ class PlanetAnomalyDetector(object):
         return fig
 
     # PLOT OF PLANET ANOMALY MAP
-    def plot_planet_anomaly_map(self, show=True):
+    def plot_map(self, show=True):
         # get Planet Anomaly Map as a grid
-        (X_grid, Y_grid), Z_grid = self.planetAnomalyMap.get_planet_anomaly_map_grid()
+        (X_grid, Y_grid), Z_grid = self.planet_anomaly_map.get_map_on_grid()
 
         # Heatmap Plot
-        PlanetAnomalyDetector._plot_heatmap(X_grid, Y_grid, Z_grid, 
+        self._plot_heatmap(X_grid, Y_grid, Z_grid, 
                                 norm=colors.LogNorm(1e-5,1e6),
                                 add_cbar=True, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
                                 add_contour=True, add_grid=True, add_tE=True,
-                                add_trajectory=True, t0=self.t0, u0=self.u0, te=self.te, t=self.reldev_maps['t'])
+                                add_trajectory=self.add_info, t0=self.t0, u0=self.u0, te=self.te, t=self.t)
         plt.title('Planet Anomaly Map')
         fig = plt.gcf()
         if show:
@@ -642,92 +732,124 @@ class PlanetAnomalyDetector(object):
         return fig
 
     # PLOT OF PLANET DETECTION ZONE
-    def plot_planet_detection_zone_map(self, show=True):
+    def plot_planet_detection_zone(self, show=True):
         # get Planet Anomaly Map as a grid
-        (X_grid, Y_grid), Z_grid = self.planetAnomalyMap.get_planet_detection_zone_map_grid()
+        (X_grid, Y_grid), Z_grid = self.planet_anomaly_map.get_planet_detection_zone_on_grid()
 
         # Heatmap Plot
-        PlanetAnomalyDetector._plot_heatmap(X_grid, Y_grid, Z_grid, 
+        self._plot_heatmap(X_grid, Y_grid, Z_grid, 
                         norm=colors.LogNorm(1e-5,1e6),
                         add_cbar=True, cbar_label='Relative Deviation $\\sum \\, \\chi_i^2$',
                         add_contour=True, add_grid=True, add_tE=True,
-                        add_trajectory=True, t0=self.t0, u0=self.u0, te=self.te, t=self.reldev_maps['t'])
+                        add_trajectory=self.add_info, t0=self.t0, u0=self.u0, te=self.te, t=self.t)
         plt.title('Planet Detection Zone of Checked Datapoints')
         fig = plt.gcf()
         if show:
             fig.show()
         return fig
 
+
+    
+
+class PlanetAnomalySampler(object):
+    """
+    This class inhabits the functions for sampling from a planet anomaly map.
+
+    Attributes
+    ----------
+    
+    planet_anomaly_map : PlanetAnomalyMap, contains the map for plotting
+    planet_anomaly_detector : PlanetAnomalyDetector, optional, contains information to add to plots
+    """
+
+    def __init__(self, planet_anomaly_map):
+        # map
+        self.planet_anomaly_map = planet_anomaly_map
+        # x y samples
+        self.xy_samples = None
+        # s alpha samples
+        self.sa_samples = None
+        self.s_grid = None
+        self.alpha_grid = None
+    
+    
     ##########################
     # Sample Values from Map #
     ##########################
 
-    def sample_from_planet_anomaly_map(self, n_samples=100):
+    def sample_from_map(self, n_samples=100):
         ''' 
         Use Planet Anomaly Map as a Distribution for Initial Values
         '''
         # check mode
-        mode = self.planetAnomalyMap.mode
+        mode = self.planet_anomaly_map.mode
 
         if mode == 'grid':
-            (X_grid, Y_grid), Z_grid = self.planetAnomalyMap.get_planet_anomaly_map_grid()
+            (X_grid, Y_grid), Z_grid = self.planet_anomaly_map.get_map_on_grid()
 
-            # choose what to use as a distribution/statistic
-            self.anomaly_statistic = Z_grid / np.sum(Z_grid)
+            # grid axes from meshgrid
+            x_range = X_grid[0,:]
+            y_range = Y_grid[:,0]
 
             # create vectorized function with Grid Interpolator
-            matrix_interp = RegularGridInterpolator((self.x_range, self.y_range), self.anomaly_statistic.T)
+            Z_interp = RegularGridInterpolator((x_range, y_range), Z_grid.T)
 
             # create sampler and sample points
-            sampler = lintsampler.LintSampler((self.x_range, self.y_range), matrix_interp, vectorizedpdf=True)
-            self.samples = sampler.sample(n_samples)
+            sampler = lintsampler.LintSampler((x_range, y_range), Z_interp, vectorizedpdf=True)
+            self.xy_samples = sampler.sample(n_samples)
 
-            return self.samples
+            return self.xy_samples
 
         if mode == 'dist':
+            # do the sampling in a different way
+            # maybe sampling directly from the distribution?
+            # interpolating the distribution not the map?
             pass
 
-    def convert_x_y_to_s_alpha_samples(self):
+    def convert_xy_to_sa_samples(self):
         # unpack sample coordinates
-        x_samples = self.samples[:,0]
-        y_samples = self.samples[:,1]
+        x_samples = self.xy_samples[:,0]
+        y_samples = self.xy_samples[:,1]
 
         # Convert samples from x,y to s,alpha
         s_samples = np.hypot(x_samples, y_samples)
         alpha_samples = np.arctan2(x_samples, y_samples) + np.pi/2
         # wrap alpha around
         alpha_samples = np.mod(alpha_samples, 2*np.pi)
-        self.s_alpha_samples = np.stack((s_samples, alpha_samples), axis=-1)
+        self.sa_samples = np.stack((s_samples, alpha_samples), axis=-1)
 
-        # Convert the grid
-        self.s_grid = np.hypot(self.X_grid, self.Y_grid)
-        alpha_grid = np.arctan2(self.X_grid, self.Y_grid) + np.pi/2
+        # get grid from map
+        (X_grid, Y_grid), Z_grid = self.planet_anomaly_map.get_map_on_grid()
+
+        # Convert the grid (for later use in the plot)
+        self.s_grid = np.hypot(X_grid, Y_grid)
+        alpha_grid = np.arctan2(X_grid, Y_grid) + np.pi/2
         self.alpha_grid = np.mod(alpha_grid, 2*np.pi)
 
-        return self.s_alpha_samples
+        return self.sa_samples
 
     def create_sample_overview_plot(self, show=True, s_alpha_plot=False):
         # unpack planet anomaly map object
-        (X_grid, Y_grid), Z_grid = self.planetAnomalyMap.get_planet_anomaly_map_grid()
+        (X_grid, Y_grid), Z_grid = self.planet_anomaly_map.get_map_on_grid()
         # unpack sample coordinates
-        x_samples = self.samples[:,0]
-        y_samples = self.samples[:,1]
+        x_samples = self.xy_samples[:,0]
+        y_samples = self.xy_samples[:,1]
         try:
-            s_samples = self.s_alpha_samples[:,0]
-            alpha_samples = self.s_alpha_samples[:,1]
+            s_samples = self.sa_samples[:,0]
+            alpha_samples = self.sa_samples[:,1]
         except:
-            self.convert_x_y_to_s_alpha_samples()
-            s_samples = self.s_alpha_samples[:,0]
-            alpha_samples = self.s_alpha_samples[:,1]
+            self.convert_xy_to_sa_samples()
+            s_samples = self.sa_samples[:,0]
+            alpha_samples = self.sa_samples[:,1]
 
         # Create a Plot in s, alpha Space
         if s_alpha_plot:
             # plot
-            PlanetAnomalyDetector._plot_heatmap(self.alpha_grid, self.s_grid, Z_grid, 
+            PlanetAnomalyPlot._plot_heatmap(self.alpha_grid, self.s_grid, Z_grid, 
                             norm=colors.LogNorm(1e-5,1e6),
                             add_cbar=False, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
                             add_contour=False, add_grid=True, add_tE=False,
-                            add_trajectory=False, t0=self.t0, u0=self.u0, te=self.te, t=self.reldev_maps['t'])
+                            add_trajectory=False, t0=None, u0=None, te=None, t=None)
             plt.gca().clear()
             # using triangulation
             x = X_grid.ravel()
@@ -752,11 +874,11 @@ class PlanetAnomalyDetector(object):
         # Create a Plot in x, y Space
         else:
             # plot
-            PlanetAnomalyDetector._plot_heatmap(X_grid, Y_grid, Z_grid, 
+            PlanetAnomalyPlot._plot_heatmap(X_grid, Y_grid, Z_grid, 
                                     norm=colors.LogNorm(1e-5,1e6),
                                     add_cbar=True, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
-                                    add_contour=True, add_grid=True, add_tE=False,
-                                    add_trajectory=False, t0=self.t0, u0=self.u0, te=self.te, t=self.reldev_maps['t'])
+                                    add_contour=True, add_grid=True, add_tE=True,
+                                    add_trajectory=False, t0=None, u0=None, te=None, t=None)
             plt.scatter(x_samples, y_samples, c='k', alpha=0.5, marker='x', label='Samples')
         # finish plot
         plt.title('Planet Anomaly Map')
@@ -769,58 +891,10 @@ class PlanetAnomalyDetector(object):
 
 
 
-class PlanetAnomalyMap(object):
-    """
-    This class inhabits the functions for storing a planet anomaly map 
-    as a grid or as a distribution.
 
-    Attributes
-    ----------
+    
 
-    """
 
-    def __init__(self, mode=None):
-        self.mode = mode
-
-    ############
-    # CREATION #
-    ############
-
-    def create_with_reldev_maps(self, reldev_maps, X_grid, Y_grid):
-        self.mode = 'grid'
-
-        self.reldev_maps = reldev_maps
-        self.X_grid = X_grid
-        self.Y_grid = Y_grid
-
-        self.detection_zone_map = np.average(self.reldev_maps['detection_zone'], axis=0)
-        self.planet_anomaly_map = np.average(self.reldev_maps['detection_zone'], axis=0, 
-                                            weights=self.reldev_maps['weight'])
-
-    def create_with_distribution(self, dist):
-        self.mode = 'dist'
-
-    ###############
-    # RETURN DATA #
-    ###############
-
-    def get_planet_anomaly_map_grid(self):
-        if self.mode == 'grid':
-            return (self.X_grid, self.Y_grid), self.planet_anomaly_map
-
-        if self.mode == 'dist':
-            # bin distribution into grid
-            pass
-
-    def get_planet_detection_zone_map_grid(self):
-        if self.mode == 'grid':
-            return (self.X_grid, self.Y_grid), self.detection_zone_map
-
-        if self.mode == 'dist':
-            # bin distribution into grid
-            pass
-
-        
 
 if __name__ == '__main__':
     from pyLIMA import event
