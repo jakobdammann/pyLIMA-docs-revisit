@@ -39,3 +39,4 @@
 32,     22.11., 3,      start coding rejection sampling
 33,     23.11., 5,      rejection sampling implementation & meeting & stop after datapoints
 33,     25.11., 3,      sampling class & updating demo
+33,     26.11., 5,      rejection sampling multiprocessing & binning to meshgrid

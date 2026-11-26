@@ -177,7 +177,7 @@ class PlanetAnomalyDetector(object):
     # Creates the Planet Anomaly Map and Detection Zone Map
     def create_map_on_grid(self, meshgrid_limits=((-2.0,2.0),(-2.0,2.0)), 
                            resolution=100, q=0.001, rs=0.0005, delta_time=5,
-                           n_processes=None, verbose=False):
+                           n_processes=None, logging=False):
         # algorithm parameters
         t_range = (self.t0 - delta_time, self.t0 + delta_time) # distance interval around t0 to compute reldev [in JD]
 
@@ -228,7 +228,7 @@ class PlanetAnomalyDetector(object):
                 pspl = self._pspl_n_imagesf(t, self.u0, self.te, self.t0)[0]
                 fmodel = fs * pspl + fb
                 weight = (freal - fmodel)**2 / ferr**2 # use delta chisq
-                if verbose:
+                if logging:
                     print('real:', freal, ' model:', fmodel, ' weight:', weight)
 
                 # save
@@ -451,9 +451,8 @@ class PlanetAnomalyDetector(object):
     def create_map_with_rejection_sampling(self, 
                                   xy_limits=((-2.0,2.0),(-2.0,2.0)), logq_limits=(-5,-1),
                                   rs=0.0005, delta_time=5,
-                                  n_samples=100000, M=8, 
-                                  batch_size=10, n_processes=None, 
-                                  seed=0, logging=False):
+                                  n_samples=100000, M=5,
+                                  n_processes=None, seed=0):
 
         ### Precompute weight and other values at each datapoint
         t_range = (self.t0 - delta_time, self.t0 + delta_time) # [in JD]
@@ -478,40 +477,26 @@ class PlanetAnomalyDetector(object):
                  for n, s in zip(n_samples_workers, seeds_workers)]
 
         # multiprocess rejection sampling
+        print('Starting Rejection Sampling.')
         with mp.Pool(n_processes) as pool:
             results = pool.starmap(PlanetAnomalyDetector._rejection_sampling_worker, jobs)
 
         # concatenate accepted samples
         accepted_samples = np.concatenate([r[0] for r in results])
         n_draws = np.sum([r[1] for r in results])
+        print('Rejection Sampling finished.')
 
         # calculate efficiency
         efficiency = len(accepted_samples) / n_draws
         print('Efficiency:', efficiency)
 
-        # plot
-        data = np.column_stack([accepted_samples[:, 0], 
-                                accepted_samples[:, 1], 
-                                accepted_samples[:, 2]])
+        # create Anomaly Map object
+        self.planet_anomaly_map = PlanetAnomalyMap()
+        self.planet_anomaly_map.create_with_distribution(accepted_samples, xy_limits, logq_limits)
+        print('Planet Anomaly Map created.')
 
-        fig = corner.corner(
-            data,
-            labels=[r"$x\ [\theta_E]$", r"$y\ [\theta_E]$", r"$\log_{10} q$"],
-            range=[(-2, 2), (-2, 2), (-5, -1)],
-            bins=40,
-            plot_datapoints=False,
-            plot_density=True,
-            fill_contours=True,
-        )
-
-        fig.savefig("my_project/graphics/corner_xylogq.png", dpi=150)
-
-        from matplotlib.colors import LogNorm
-        plt.figure()
-        plt.hist2d(accepted_samples[:, 0], accepted_samples[:, 1], bins=40, norm=LogNorm(clip=True), cmap="turbo")
-        plt.colorbar(label="counts")
-        fig.savefig("my_project/graphics/corner_xylogq1.png", dpi=150)
-
+        # return anomaly map
+        return self.planet_anomaly_map
 
 
 
@@ -534,6 +519,22 @@ class PlanetAnomalyMap(object):
     def __init__(self):
         self.mode = None
 
+        self.map_on_grid = None
+        self.detection_zone_map_on_grid = None
+
+        # relevant for grid mode
+        self.reldev_maps = None
+        self.X_grid = None
+        self.Y_grid = None
+
+        # relevant for dist mode
+        self.map_as_distribution = None
+        self.xy_limits = None
+        self.logq_limits = None
+        self.resolution_as_map = 100
+        self.logq_range_mask = None
+
+
     ############
     # CREATION #
     ############
@@ -545,32 +546,70 @@ class PlanetAnomalyMap(object):
         self.X_grid = X_grid
         self.Y_grid = Y_grid
 
-        self.detection_zone_map = np.average(self.reldev_maps['detection_zone'], axis=0)
-        self.planet_anomaly_map = np.average(self.reldev_maps['detection_zone'], axis=0, 
+        self.detection_zone_map_on_grid = np.average(self.reldev_maps['detection_zone'], axis=0)
+        self.map_on_grid = np.average(self.reldev_maps['detection_zone'], axis=0, 
                                             weights=self.reldev_maps['weight'])
 
-    def create_with_distribution(self, dist):
+    def create_with_distribution(self, distribution_samples, xy_limits, logq_limits):
         self.mode = 'dist'
+
+        self.map_as_distribution = distribution_samples
+        self.xy_limits = xy_limits
+        self.logq_limits = logq_limits
 
     ###############
     # RETURN DATA #
     ###############
 
+    @staticmethod
+    def _bin_distribution_into_xy_grid(samples, xy_limits, logq_range=None, resolution=100):
+        # make sure samples is in numpy array
+        samples = np.asarray(samples)
+
+        # mask samples if a logq range is applied
+        if logq_range is not None:
+            mask = (samples[:,2] >= logq_range[0]) & (samples[:,2] <= logq_range[1])
+            samples = samples[mask]
+        if len(samples) == 0:
+            raise ValueError('No samples left for binning (after applying logq range).')
+
+        # define the edges of bins
+        x_edges = np.linspace(xy_limits[0][0], xy_limits[0][1], resolution + 1)
+        y_edges = np.linspace(xy_limits[1][0], xy_limits[1][1], resolution + 1)
+
+        # bin
+        Z_grid, _, _ = np.histogram2d(samples[:,0], samples[:,1], bins=(x_edges,y_edges), density=True)
+
+        # create meshgrid
+        x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+        y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+        X_grid, Y_grid = np.meshgrid(x_centers, y_centers)
+
+        # return all
+        return (X_grid, Y_grid), Z_grid.T
+        
+
     def get_map_on_grid(self):
         if self.mode == 'grid':
-            return (self.X_grid, self.Y_grid), self.planet_anomaly_map
+            return (self.X_grid, self.Y_grid), self.map_on_grid
 
         if self.mode == 'dist':
             # bin distribution into grid
-            pass
+            return self._bin_distribution_into_xy_grid(self.map_as_distribution, 
+                                                       self.xy_limits, self.logq_range_mask, 
+                                                       self.resolution_as_map)
+
+        raise ValueError("Map has not been created yet. (mode is None.)")
 
     def get_planet_detection_zone_on_grid(self):
         if self.mode == 'grid':
-            return (self.X_grid, self.Y_grid), self.detection_zone_map
+            return (self.X_grid, self.Y_grid), self.detection_zone_map_on_grid
 
         if self.mode == 'dist':
             # bin distribution into grid
-            pass
+            raise NotImplementedError()
+
+        raise ValueError("Map has not been created yet. (mode is None.)")
 
 
 #############################
@@ -589,12 +628,15 @@ class PlanetAnomalyPlot(object):
     planet_anomaly_detector : PlanetAnomalyDetector, optional, contains information to add to plots
     """
 
-    def __init__(self, planet_anomaly_map, planet_anomaly_detector = None):
+    def __init__(self, planet_anomaly_map, planet_anomaly_detector = None, norm=None):
         self.planet_anomaly_map = planet_anomaly_map
         self.planet_anomaly_detector = planet_anomaly_detector
 
         # if Detector exists add additional information to plots
         self.add_info =  False
+        self.t0 = None
+        self.te = None
+        self.u0 = None
         if self.planet_anomaly_detector is not None:
             self.add_info = True
             self.t0 = self.planet_anomaly_detector.t0
@@ -605,6 +647,11 @@ class PlanetAnomalyPlot(object):
         self.t = None
         if self.planet_anomaly_map.mode == 'grid' and self.add_info:
             self.t = self.planet_anomaly_map.reldev_maps['t']
+
+        # set norm
+        self.norm = norm
+        if self.norm is None:
+            self.norm = colors.LogNorm(1e-5,1e6)
 
     #########
     # PLOTS #
@@ -725,7 +772,7 @@ class PlanetAnomalyPlot(object):
                 plt.title(f'{name}, $t = t0 + {t - self.t0:.1f}$, $w = {weight:.1f}$')
 
             # heatmap
-            norm = colors.LogNorm(1e-5, 1e8)
+            norm = self.norm
             plt.pcolormesh(X_grid, Y_grid, map*weight, shading='auto', cmap=cm.turbo, norm=norm)
 
             # trajectory
@@ -755,7 +802,7 @@ class PlanetAnomalyPlot(object):
 
         # Heatmap Plot
         self._plot_heatmap(X_grid, Y_grid, Z_grid, 
-                                norm=colors.LogNorm(1e-5,1e6),
+                                norm=self.norm,
                                 add_cbar=True, cbar_label='Weighted Relative Deviation $\\sum \\, w_i \\cdot \\chi_i^2$',
                                 add_contour=True, add_grid=True, add_tE=True,
                                 add_trajectory=self.add_info, t0=self.t0, u0=self.u0, te=self.te, t=self.t)
@@ -772,7 +819,7 @@ class PlanetAnomalyPlot(object):
 
         # Heatmap Plot
         self._plot_heatmap(X_grid, Y_grid, Z_grid, 
-                        norm=colors.LogNorm(1e-5,1e6),
+                        norm=self.norm,
                         add_cbar=True, cbar_label='Relative Deviation $\\sum \\, \\chi_i^2$',
                         add_contour=True, add_grid=True, add_tE=True,
                         add_trajectory=self.add_info, t0=self.t0, u0=self.u0, te=self.te, t=self.t)
@@ -795,7 +842,6 @@ class PlanetAnomalySampler(object):
     ----------
     
     planet_anomaly_map : PlanetAnomalyMap, contains the map for plotting
-    planet_anomaly_detector : PlanetAnomalyDetector, optional, contains information to add to plots
     """
 
     def __init__(self, planet_anomaly_map):
@@ -986,6 +1032,37 @@ if __name__ == '__main__':
     ##################################################
     ### Create Anomaly Map
     start = timeit.default_timer()
-    anomaly_map = anomaly_detector.create_map_with_rejection_sampling(logging=True)
+    anomaly_map = anomaly_detector.create_map_with_rejection_sampling()
     end = timeit.default_timer()
-    print('Elapsed time:', end - start)
+    print(f'Elapsed time during Rejection Sampling: {end - start:.2f}s')
+
+    ### Plot Anomaly Map
+    anomaly_map.resolution_as_map = 200
+    norm = colors.LogNorm(clip=True)
+    anomaly_plot = PlanetAnomalyPlot(anomaly_map, anomaly_detector, norm=norm)
+    fig_overview = anomaly_plot.plot_map(show=False)
+    plt.savefig("my_project/graphics/corner_xylogq0.png", dpi=150)
+
+    # corner plot
+    samples = anomaly_map.map_as_distribution
+    data = np.column_stack([samples[:, 0], 
+                            samples[:, 1], 
+                            samples[:, 2]])
+
+    fig = corner.corner(
+        data,
+        labels=[r"$x\ [\theta_E]$", r"$y\ [\theta_E]$", r"$\log_{10} q$"],
+        range=[(-2, 2), (-2, 2), (-5, -1)],
+        bins=40,
+        plot_datapoints=False,
+        plot_density=True,
+        fill_contours=True,
+    )
+
+    fig.savefig("my_project/graphics/corner_xylogq.png", dpi=150)
+
+    from matplotlib.colors import LogNorm
+    plt.figure()
+    plt.hist2d(samples[:, 0], samples[:, 1], bins=40, norm=LogNorm(clip=True), cmap="turbo")
+    plt.colorbar(label="counts")
+    plt.savefig("my_project/graphics/corner_xylogq1.png", dpi=150)
