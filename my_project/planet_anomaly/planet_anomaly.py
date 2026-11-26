@@ -7,7 +7,7 @@ import matplotlib.colors as colors
 import matplotlib.tri as mtri
 import corner
 
-import multiprocessing
+import multiprocessing as mp
 
 import lintsampler
 from scipy.interpolate import RegularGridInterpolator
@@ -21,9 +21,9 @@ VBB=VBBinaryLensing.VBBinaryLensing()
 VBB.Tol=float(0.001)
 VBB.satellite=int(0)
 
-############################
-# PLANET ANOMALY MAP CLASS #
-############################
+#################################
+# PLANET ANOMALY DETECTOR CLASS #
+#################################
 
 class PlanetAnomalyDetector(object):
     """
@@ -104,8 +104,8 @@ class PlanetAnomalyDetector(object):
         u_plus = 0.5 * (u + u_sqrt4)
         u_minus = 0.5 * (u - u_sqrt4)
         
-        # Handle potential division by zero if u_plus*2 - u_minus**2 is zero
-        denominator = (u_plus * 2 - u_minus**2)
+        # Handle potential division by zero if u_plus**2 - u_minus**2 is zero
+        denominator = (u_plus**2 - u_minus**2)
         mu_plus = u_plus**2 / denominator if denominator != 0 else np.inf
         mu_minus = u_minus**2 / denominator if denominator != 0 else np.inf
         
@@ -241,7 +241,7 @@ class PlanetAnomalyDetector(object):
                             fs, fb, ferr, rs, X_grid, Y_grid))
 
         # multiprocessing to compute reldev values on meshgrid
-        with multiprocessing.Pool(n_processes) as pool:
+        with mp.Pool(n_processes) as pool:
             reldev_maps['detection_zone'] = pool.starmap(PlanetAnomalyDetector._reldev_map, jobs)
 
         # average the reldev maps
@@ -256,6 +256,7 @@ class PlanetAnomalyDetector(object):
     # REJECTION SAMPLING #
     ######################
 
+    # gets weights for each datapoint from a lightcurve, used in map computation
     @staticmethod
     def _get_map_weights(event, pspl_params, t_range, logging=False):
         # get pspl params
@@ -316,6 +317,7 @@ class PlanetAnomalyDetector(object):
         # returning
         return weights
 
+    # Computes specific values for each datapoint, needs the computed weights
     @staticmethod
     def _prepare_points(weights, u0, te, t0):
         """
@@ -338,7 +340,7 @@ class PlanetAnomalyDetector(object):
             'im2x': bsx * u_minus / u, 'im2y': u0 * u_minus / u,    # minor image
         }
     
-    # Calculates RelDev for a single value using VBB
+    # Computes RelDev for a single value using VBB
     @staticmethod
     def _reldev_value(q, t, u0, te, t0, fs, fb, ferr, rs, xp, yp, tol=0.001): 
         """
@@ -385,28 +387,14 @@ class PlanetAnomalyDetector(object):
         
         return Z
 
-
-    # Creates the Planet Anomaly Map dependend on x,y,q while using Rejection Sampling
-    def create_map_with_rejection_sampling(self, 
-                                  xy_limits=((-2.0,2.0),(-2.0,2.0)), logq_limits=(-5,-1),
-                                  rs=0.0005, delta_time=5,
-                                  n_samples=100000, M=None, 
-                                  batch_size=10, n_processes=None, 
-                                  seed=0, logging=False):
-
-        ### Precompute weight and other values at each datapoint
-        t_range = (self.t0 - delta_time, self.t0 + delta_time) # [in JD]
-        weights = self._get_map_weights(self.event, self.pspl_params, t_range)
-        points = self._prepare_points(weights, self.u0, self.te, self.t0)
-        w_tot = np.sum(points['w'])
-
+    # Computes a given amount of samples with rejection sampling, for multiprocessing
+    @staticmethod
+    def _rejection_sampling_worker(points, w_tot, u0, te, t0, rs, 
+                                   xy_limits, logq_limits, 
+                                   M, n_samples, seed):
         # Setup
         rng = np.random.default_rng(seed)
         accepted_samples, n_draws, n_clipped = [], 0, 0
-
-        ### Choose fitting M
-        if M is None:
-            M = 8
 
         ### Rejection Sampling
         while len(accepted_samples) < n_samples:
@@ -431,10 +419,10 @@ class PlanetAnomalyDetector(object):
                 for i in order[start:stop]:
 
                     # calculate reldev value
-                    reldev = self._reldev_value(10**logq, points['t'][i], 
-                                                self.u0, self.te, self.t0, 
-                                                points['fs'][i], points['fb'][i], 
-                                                points['ferr'][i], rs, x, y)
+                    reldev = PlanetAnomalyDetector._reldev_value(10**logq, points['t'][i], 
+                                                                 u0, te, t0, 
+                                                                 points['fs'][i], points['fb'][i], 
+                                                                 points['ferr'][i], rs, x, y)
                     
                     # weighted sum
                     summed += reldev * points['w'][i]
@@ -452,16 +440,52 @@ class PlanetAnomalyDetector(object):
             # append values if accepted
             if accepted:
                 accepted_samples.append([x, y, logq])
-            
-                # print info on progress
-                if logging and len(accepted_samples)%1000 == 0:
-                    print(f'''Accepted Samples: {len(accepted_samples)} / {n_samples}, 
-                    Efficiency: {len(accepted_samples)/n_draws:.3f}''')
 
             # add one to the draw count
             n_draws += 1
 
-        accepted_samples = np.array(accepted_samples)
+        # return samples and amount of draws
+        return np.array(accepted_samples), n_draws
+
+    # Creates the Planet Anomaly Map dependend on x,y,q while using Rejection Sampling
+    def create_map_with_rejection_sampling(self, 
+                                  xy_limits=((-2.0,2.0),(-2.0,2.0)), logq_limits=(-5,-1),
+                                  rs=0.0005, delta_time=5,
+                                  n_samples=100000, M=8, 
+                                  batch_size=10, n_processes=None, 
+                                  seed=0, logging=False):
+
+        ### Precompute weight and other values at each datapoint
+        t_range = (self.t0 - delta_time, self.t0 + delta_time) # [in JD]
+        weights = self._get_map_weights(self.event, self.pspl_params, t_range)
+        points = self._prepare_points(weights, self.u0, self.te, self.t0)
+        w_tot = np.sum(points['w'])
+
+        # set number of processes
+        if n_processes == None:
+            n_processes = mp.cpu_count()
+
+        # split number of samples evenly accross processes
+        n_samples_workers = [n_samples // n_processes + (i < n_samples % n_processes) 
+                             for i in range(n_processes)]
+
+        # create seeds
+        seeds_workers = np.random.SeedSequence(seed).spawn(n_processes)
+
+        # set jobs
+        jobs = [(points, w_tot, self.u0, self.te, self.t0, rs, 
+                 xy_limits, logq_limits, M, n, s) 
+                 for n, s in zip(n_samples_workers, seeds_workers)]
+
+        # multiprocess rejection sampling
+        with mp.Pool(n_processes) as pool:
+            results = pool.starmap(PlanetAnomalyDetector._rejection_sampling_worker, jobs)
+
+        # concatenate accepted samples
+        accepted_samples = np.concatenate([r[0] for r in results])
+        n_draws = np.sum([r[1] for r in results])
+
+        # calculate efficiency
         efficiency = len(accepted_samples) / n_draws
         print('Efficiency:', efficiency)
 
@@ -488,6 +512,12 @@ class PlanetAnomalyDetector(object):
         plt.colorbar(label="counts")
         fig.savefig("my_project/graphics/corner_xylogq1.png", dpi=150)
 
+
+
+
+############################
+# PLANET ANOMALY MAP CLASS #
+############################
 
 
 class PlanetAnomalyMap(object):
@@ -543,6 +573,10 @@ class PlanetAnomalyMap(object):
             pass
 
 
+#############################
+# PLANET ANOMALY PLOT CLASS #
+#############################
+
 class PlanetAnomalyPlot(object):
     """
     This class inhabits the functions for plotting a Planet Anomaly Map.
@@ -569,7 +603,7 @@ class PlanetAnomalyPlot(object):
 
         # if they exist, add points add t position on trajectory
         self.t = None
-        if self.planet_anomaly_map.mode is 'grid' and self.add_info:
+        if self.planet_anomaly_map.mode == 'grid' and self.add_info:
             self.t = self.planet_anomaly_map.reldev_maps['t']
 
     #########
@@ -660,7 +694,7 @@ class PlanetAnomalyPlot(object):
         Create a figure of all maps, one per datapoint.
         '''
         # check if Map is in right mode
-        if self.planet_anomaly_map.mode is not 'grid':
+        if self.planet_anomaly_map.mode != 'grid':
             print('Cannot perform overview plot on any other map mode than \'grid\'')
             return
 
@@ -711,7 +745,7 @@ class PlanetAnomalyPlot(object):
         plt.tight_layout()
         fig = plt.gcf()
         if show:
-            fig.show()
+            plt.show()
         return fig
 
     # PLOT OF PLANET ANOMALY MAP
@@ -728,7 +762,7 @@ class PlanetAnomalyPlot(object):
         plt.title('Planet Anomaly Map')
         fig = plt.gcf()
         if show:
-            fig.show()
+            plt.show()
         return fig
 
     # PLOT OF PLANET DETECTION ZONE
@@ -745,11 +779,13 @@ class PlanetAnomalyPlot(object):
         plt.title('Planet Detection Zone of Checked Datapoints')
         fig = plt.gcf()
         if show:
-            fig.show()
+            plt.show()
         return fig
 
 
-    
+################################
+# PLANET ANOMALY SAMPLER CLASS #
+################################
 
 class PlanetAnomalySampler(object):
     """
@@ -886,22 +922,23 @@ class PlanetAnomalySampler(object):
 
         fig = plt.gcf()
         if show:
-            fig.show()
+            plt.show()
         return fig
 
 
 
-
+###############
+# TEST SCRIPT #
+###############
     
-
-
-
 if __name__ == '__main__':
     from pyLIMA import event
     from pyLIMA.simulations import simulator
     from pyLIMA.fits import TRF_fit
     from pyLIMA.models import PSBL_model
     from pyLIMA.outputs import pyLIMA_plots
+
+    import timeit
 
     ######################################################
     #### Create simulated Microlensing event
@@ -948,4 +985,7 @@ if __name__ == '__main__':
 
     ##################################################
     ### Create Anomaly Map
+    start = timeit.default_timer()
     anomaly_map = anomaly_detector.create_map_with_rejection_sampling(logging=True)
+    end = timeit.default_timer()
+    print('Elapsed time:', end - start)
